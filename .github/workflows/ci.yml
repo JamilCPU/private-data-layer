@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: uv run pytest -q
+      - run: uv run ruff check .
+
+  # stub: job added in Task 10.
+
+  image:
+    # The Dockerfile arrives in a later task; skip until it exists.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && hashFiles('gateway/Dockerfile') != ''
+    needs: gateway
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: gateway
+          push: true
+          tags: |
+            ghcr.io/jamilcpu/pdl-gateway:latest
+            ghcr.io/jamilcpu/pdl-gateway:${{ github.sha }}

@@ -1,0 +1,46 @@
+[project]
+name = "pdl-gateway"
+version = "0.1.0"
+description = "OAuth 2.1 server and scope-filtering MCP proxy for the private data layer"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.30,<2",
+    "starlette>=0.40",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "pyyaml>=6",
+    "pydantic>=2",
+    "python-multipart>=0.0.9",
+]
+
+[project.scripts]
+pdl-gateway = "pdl_gateway.__main__:main"
+pdl-new-client-secret = "pdl_gateway.cli_secrets:new_client_secret"
+pdl-set-passphrase = "pdl_gateway.cli_secrets:set_approval_passphrase"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5",
+    "respx>=0.21",
+    "asgi-lifespan>=2",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pdl_gateway"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--cov=pdl_gateway --cov-report=term-missing --cov-fail-under=80"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

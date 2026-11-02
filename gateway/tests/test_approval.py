@@ -4,7 +4,7 @@ import html
 
 import httpx
 
-from .test_oauth_flows import begin, dcr
+from .oauth_helpers import begin, dcr
 
 UNKNOWN = "This approval request is unknown or has expired. Start again from your client."
 

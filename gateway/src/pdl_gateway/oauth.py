@@ -88,7 +88,8 @@ class GatewayAuthProvider:
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         self._store.save_client(client_info)
-        logger.info("registered client %s (%s)", client_info.client_id, client_info.client_name)
+        name = (client_info.client_name or "")[:80]
+        logger.info("registered client %s (%r)", client_info.client_id, name)
 
     def _client_name(self, client_id: str) -> str:
         if self._headless_grant(client_id) is not None:
@@ -129,13 +130,18 @@ class GatewayAuthProvider:
         )
 
     def complete_approval(self, request_id: str, passphrase: str, approved: bool) -> str:
-        """Return the client redirect URL; the passphrase is checked before anything else."""
+        """Return the client redirect URL; the passphrase is verified before any code is issued.
+
+        A cheap lookup runs first so unknown requests never cost a PBKDF2 derivation.
+        """
+        if self._store.get_pending(request_id, self._clock()) is None:
+            raise LookupError("unknown or expired approval request")
         if not verify_secret(passphrase, self._secrets.approval_passphrase_hash):
             logger.warning("approval %s: wrong passphrase", request_id[:8])
             raise ApprovalError("wrong passphrase")
         now = self._clock()
         pending = self._store.pop_pending(request_id, now)
-        if pending is None:
+        if pending is None:  # expired or consumed while the passphrase was being checked
             raise LookupError("unknown or expired approval request")
         params = AuthorizationParams.model_validate_json(pending.params_json)
         redirect = str(params.redirect_uri)
@@ -196,7 +202,8 @@ class GatewayAuthProvider:
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
-        self._store.delete_code(authorization_code.code)  # single use, whatever happens next
+        if self._store.delete_code(authorization_code.code) == 0:  # single use
+            raise TokenError("invalid_grant", "authorization code already used")
         return self._issue_tokens(
             authorization_code.client_id,
             authorization_code.scopes,
@@ -223,11 +230,12 @@ class GatewayAuthProvider:
     async def exchange_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: RefreshToken, scopes: list[str]
     ) -> OAuthToken:
+        """Rotate; ``scopes`` (request-derived) is ignored so a session can never narrow for good."""
         if self._store.revoke(refresh_token.token) == 0:
             raise TokenError("invalid_grant", "refresh token already used or revoked")
         return self._issue_tokens(
             refresh_token.client_id,
-            scopes,
+            refresh_token.scopes,
             with_refresh=True,
             refresh_expires_at=refresh_token.expires_at,
         )

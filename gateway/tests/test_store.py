@@ -73,6 +73,15 @@ def test_pending_is_single_use_and_expires(store: TokenStore) -> None:
     assert store.pop_pending("never-saved", now=0.0) is None
 
 
+def test_get_pending_peeks_without_consuming(store: TokenStore) -> None:
+    store.save_pending(_pending("r1", expires_at=100.0))
+    assert store.get_pending("r1", now=50.0) == _pending("r1", expires_at=100.0)
+    assert store.get_pending("r1", now=50.0) == _pending("r1", expires_at=100.0)
+    assert store.get_pending("r1", now=100.5) is None
+    assert store.get_pending("never-saved", now=0.0) is None
+    assert store.pop_pending("r1", now=50.0) is not None
+
+
 def test_code_round_trip_and_delete(store: TokenStore) -> None:
     code = _code()
     store.save_code(code)

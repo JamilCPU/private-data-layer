@@ -91,6 +91,12 @@ def test_code_round_trip_and_delete(store: TokenStore) -> None:
     store.delete_code("c1")  # deleting twice is harmless
 
 
+def test_delete_code_reports_rowcount(store: TokenStore) -> None:
+    store.save_code(_code("c9"))
+    assert store.delete_code("c9") == 1
+    assert store.delete_code("c9") == 0
+
+
 def test_token_hashing(store: TokenStore, tmp_path: Path) -> None:
     raw = "super-secret-token-value-123"
     store.save_token("access", raw, "cid", ["homestudio:read"], expires_at=None)

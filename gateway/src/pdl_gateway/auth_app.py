@@ -23,6 +23,7 @@ from pdl_gateway.token_route import build_token_endpoint
 
 METADATA_PATH = "/.well-known/oauth-authorization-server"
 GRANT_TYPES = ["authorization_code", "refresh_token", "client_credentials"]
+TOKEN_AUTH_METHODS = ["client_secret_post", "client_secret_basic", "none"]
 RESOURCE_NAME = "private-data-layer gateway"
 
 
@@ -30,7 +31,10 @@ def _metadata_route(
     issuer: AnyHttpUrl, registration: ClientRegistrationOptions, revocation: RevocationOptions
 ) -> Route:
     metadata = build_metadata(issuer, None, registration, revocation).model_copy(
-        update={"grant_types_supported": list(GRANT_TYPES)}
+        update={
+            "grant_types_supported": list(GRANT_TYPES),
+            "token_endpoint_auth_methods_supported": list(TOKEN_AUTH_METHODS),
+        }
     )
     return Route(
         METADATA_PATH,

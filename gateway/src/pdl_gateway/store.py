@@ -145,8 +145,9 @@ class TokenStore:
         row = self._fetch_one("SELECT code_json FROM codes WHERE code = ?", (code,))
         return AuthorizationCode.model_validate_json(str(row[0])) if row else None
 
-    def delete_code(self, code: str) -> None:
-        self._execute("DELETE FROM codes WHERE code = ?", (code,))
+    def delete_code(self, code: str) -> int:
+        """Delete the code; return the number of rows removed (0 if already gone)."""
+        return self._execute("DELETE FROM codes WHERE code = ?", (code,)).rowcount
 
     # --- tokens ----------------------------------------------------------
 

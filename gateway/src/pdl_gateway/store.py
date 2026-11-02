@@ -109,6 +109,17 @@ class TokenStore:
             (p.request_id, p.client_id, p.client_name, p.params_json, p.expires_at),
         )
 
+    def get_pending(self, request_id: str, now: float) -> PendingApproval | None:
+        """Return the approval without consuming it; None if missing or expired."""
+        row = self._fetch_one(
+            "SELECT request_id, client_id, client_name, params_json, expires_at"
+            " FROM pending WHERE request_id = ?",
+            (request_id,),
+        )
+        if row is None or now > row[4]:
+            return None
+        return PendingApproval(*row)
+
     def pop_pending(self, request_id: str, now: float) -> PendingApproval | None:
         """Delete and return the approval; None if missing or expired."""
         with self._lock, self._conn:

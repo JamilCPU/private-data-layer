@@ -1,0 +1,26 @@
+issuer_url: https://gateway.lab
+resource_url: https://gateway.lab/mcp
+listen_host: 0.0.0.0
+listen_port: 8787
+db_path: /data/gateway.db
+audit_dir: /data/audit
+scopes: [homestudio:read, automations:read, email:read, sms:read, bank:read, search:read, gateway:audit]
+backends:
+  - name: homestudio
+    url: http://homestudio-mcp:8000/mcp
+    scope: homestudio:read
+    secret_header: X-Gateway-Secret
+    secret_env: HOMESTUDIO_MCP_SECRET
+  - name: automations
+    url: https://automations-mcp:7702/mcp
+    scope: automations:read
+    bearer_env: AUTOMATIONS_MCP_TOKEN
+    ca_file: /etc/pdl/automations-ca.pem
+    allow_tools: [list_devices, get_device, list_programs, get_program, get_program_logs, get_usb_power, recent_history]
+grants:
+  - name: personal-assistant
+    kind: headless
+    scopes: [homestudio:read, automations:read, email:read, sms:read, bank:read, search:read, gateway:audit]
+  - name: interactive-default
+    kind: interactive
+    scopes: [homestudio:read, automations:read]

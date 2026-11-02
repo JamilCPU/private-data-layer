@@ -188,3 +188,77 @@ def test_client_secrets_must_be_mapping(tmp_path: Path) -> None:
     path.write_text("approval_passphrase: h\nclient_secrets: [a, b]\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="client_secrets"):
         load_secrets(path)
+
+
+@pytest.mark.parametrize("key", ["secret_env", "bearer_env"])
+@pytest.mark.parametrize("value", [None, "", "  "])
+def test_null_or_empty_auth_key_rejected(tmp_path: Path, key: str, value: str | None) -> None:
+    def mutate(raw: dict[str, Any]) -> None:
+        raw["backends"][0][key] = value
+
+    with pytest.raises(ConfigError, match=key):
+        load_config(_write_variant(tmp_path, mutate))
+
+
+def test_unknown_backend_key_rejected(tmp_path: Path) -> None:
+    def mutate(raw: dict[str, Any]) -> None:
+        raw["backends"][1]["allow_tool"] = ["list_devices"]
+
+    with pytest.raises(ConfigError, match=r"allow_tool.*automations"):
+        load_config(_write_variant(tmp_path, mutate))
+
+
+def test_unknown_grant_key_rejected(tmp_path: Path) -> None:
+    def mutate(raw: dict[str, Any]) -> None:
+        raw["grants"][0]["scope"] = ["bank:read"]
+
+    with pytest.raises(ConfigError, match=r"'scope'.*personal-assistant"):
+        load_config(_write_variant(tmp_path, mutate))
+
+
+def test_unknown_top_level_key_rejected(tmp_path: Path) -> None:
+    def mutate(raw: dict[str, Any]) -> None:
+        raw["listen_prt"] = 1
+
+    with pytest.raises(ConfigError, match=r"listen_prt.*top level"):
+        load_config(_write_variant(tmp_path, mutate))
+
+
+@pytest.mark.parametrize("value", [None, "list_devices"])
+def test_allow_tools_must_be_list(tmp_path: Path, value: object) -> None:
+    def mutate(raw: dict[str, Any]) -> None:
+        raw["backends"][1]["allow_tools"] = value
+
+    with pytest.raises(ConfigError, match="allow_tools"):
+        load_config(_write_variant(tmp_path, mutate))
+
+
+def test_empty_allow_tools_means_no_tools(tmp_path: Path) -> None:
+    def mutate(raw: dict[str, Any]) -> None:
+        raw["backends"][1]["allow_tools"] = []
+
+    assert load_config(_write_variant(tmp_path, mutate)).backends[1].allow_tools == ()
+
+
+def test_duplicate_grant_names_rejected(tmp_path: Path) -> None:
+    def mutate(raw: dict[str, Any]) -> None:
+        raw["grants"].append(dict(raw["grants"][0]))
+
+    with pytest.raises(ConfigError, match="personal-assistant"):
+        load_config(_write_variant(tmp_path, mutate))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "approval_passphrase:\nclient_secrets: {}\n",
+        "approval_passphrase: ''\nclient_secrets: {}\n",
+        "approval_passphrase: h\nclient_secrets: {pa: }\n",
+        "approval_passphrase: h\nclient_secrets: {pa: ''}\n",
+    ],
+)
+def test_null_or_empty_secret_hashes_rejected(tmp_path: Path, body: str) -> None:
+    path = tmp_path / "s.yaml"
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(ConfigError, match="non-empty"):
+        load_secrets(path)

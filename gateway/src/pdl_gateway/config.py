@@ -1,7 +1,7 @@
 """Typed, validated gateway configuration and secrets loading."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -79,36 +79,60 @@ def _read_mapping(path: Path) -> dict[str, Any]:
     return raw
 
 
-def _optional_tuple(value: Any) -> tuple[str, ...] | None:
-    return None if value is None else tuple(str(v) for v in value)
+def _check_keys(raw: dict[str, Any], allowed: set[str], section: str) -> None:
+    """Reject keys we do not know: a typo must never silently weaken a policy."""
+    for key in sorted(set(raw) - allowed):
+        raise ConfigError(f"unknown key {key!r} in {section}")
+
+
+def _string_list(value: Any, what: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ConfigError(f"{what} must be a list of strings")
+    return tuple(value)
+
+
+def _env_name(raw: dict[str, Any], key: str, backend: str) -> str | None:
+    if key not in raw:
+        return None
+    value = raw[key]
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"backend {backend!r}: {key} must be a non-empty string")
+    return value
 
 
 def _backend(raw: dict[str, Any]) -> BackendConfig:
     name = raw["name"]
-    has_secret, has_bearer = "secret_env" in raw, "bearer_env" in raw
-    if has_secret == has_bearer:
+    _check_keys(raw, {f.name for f in fields(BackendConfig)}, f"backend {name!r}")
+    secret_env = _env_name(raw, "secret_env", name)
+    bearer_env = _env_name(raw, "bearer_env", name)
+    if (secret_env is None) == (bearer_env is None):
         raise ConfigError(f"backend {name!r} must set exactly one of secret_env or bearer_env")
-    header = raw.get("secret_header", DEFAULT_SECRET_HEADER) if has_secret else None
+    header = raw.get("secret_header", DEFAULT_SECRET_HEADER) if secret_env else None
+    allow_tools = None
+    if "allow_tools" in raw:
+        allow_tools = _string_list(raw["allow_tools"], f"backend {name!r}: allow_tools")
     return BackendConfig(
         name=name,
         url=raw["url"],
         scope=raw["scope"],
-        allow_tools=_optional_tuple(raw.get("allow_tools")),
+        allow_tools=allow_tools,
         secret_header=header,
-        secret_env=raw.get("secret_env"),
-        bearer_env=raw.get("bearer_env"),
+        secret_env=secret_env,
+        bearer_env=bearer_env,
         ca_file=raw.get("ca_file"),
     )
 
 
 def _grant(raw: dict[str, Any]) -> GrantConfig:
+    name = raw["name"]
+    _check_keys(raw, {f.name for f in fields(GrantConfig)}, f"grant {name!r}")
     kind = raw["kind"]
     if kind not in _GRANT_KINDS:
-        raise ConfigError(f"grant {raw['name']!r} has unknown kind {kind!r}")
+        raise ConfigError(f"grant {name!r} has unknown kind {kind!r}")
     return GrantConfig(
-        name=raw["name"],
+        name=name,
         kind=cast(Literal["headless", "interactive"], kind),
-        scopes=tuple(raw["scopes"]),
+        scopes=_string_list(raw["scopes"], f"grant {name!r}: scopes"),
     )
 
 
@@ -117,6 +141,9 @@ def _validate(cfg: GatewayConfig) -> None:
     names = [b.name for b in cfg.backends]
     for name in sorted({n for n in names if names.count(n) > 1}):
         raise ConfigError(f"duplicate backend name {name!r}")
+    grant_names = [g.name for g in cfg.grants]
+    for name in sorted({n for n in grant_names if grant_names.count(n) > 1}):
+        raise ConfigError(f"duplicate grant name {name!r}")
     for backend in cfg.backends:
         if backend.scope not in declared:
             raise ConfigError(f"backend {backend.name!r} uses undeclared scope {backend.scope!r}")
@@ -132,6 +159,7 @@ def _validate(cfg: GatewayConfig) -> None:
 
 
 def _build_config(raw: dict[str, Any]) -> GatewayConfig:
+    _check_keys(raw, {f.name for f in fields(GatewayConfig)}, "top level")
     optional = {
         key: int(raw[key])
         for key in (
@@ -173,6 +201,12 @@ def load_config(path: Path) -> GatewayConfig:
     return cfg
 
 
+def _hash_text(value: Any, what: str, path: Path) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"{path}: {what} must be a non-empty string")
+    return value
+
+
 def load_secrets(path: Path) -> GatewaySecrets:
     """Load the hashed approval passphrase and client secrets."""
     raw = _read_mapping(path)
@@ -182,9 +216,15 @@ def load_secrets(path: Path) -> GatewaySecrets:
     clients = raw["client_secrets"] or {}
     if not isinstance(clients, dict):
         raise ConfigError(f"{path}: client_secrets must be a mapping")
+    hashes = {
+        str(client): _hash_text(value, f"client_secrets[{client!r}]", path)
+        for client, value in clients.items()
+    }
     return GatewaySecrets(
-        approval_passphrase_hash=str(raw["approval_passphrase"]),
-        client_secret_hashes=MappingProxyType({str(k): str(v) for k, v in clients.items()}),
+        approval_passphrase_hash=_hash_text(
+            raw["approval_passphrase"], "approval_passphrase", path
+        ),
+        client_secret_hashes=MappingProxyType(hashes),
     )
 
 

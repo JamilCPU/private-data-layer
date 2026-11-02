@@ -147,8 +147,9 @@ class TokenStore:
         scopes: Sequence[str],
         expires_at: int | None,
     ) -> None:
+        """Insert a token row; a hash collision raises ``sqlite3.IntegrityError``."""
         self._execute(
-            "INSERT OR REPLACE INTO tokens"
+            "INSERT INTO tokens"
             " (hash, kind, client_id, scopes_json, expires_at, revoked, created_at)"
             " VALUES (?, ?, ?, ?, ?, 0, ?)",
             (_digest(token), kind, client_id, json.dumps(list(scopes)), expires_at, time.time()),

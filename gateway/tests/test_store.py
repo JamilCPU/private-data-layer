@@ -1,5 +1,6 @@
 """Tests for the SQLite token store."""
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -142,3 +143,11 @@ def test_data_persists_across_reopen(tmp_path: Path) -> None:
         assert second.load_token("access", "tok", now=0) is not None
     finally:
         second.close()
+
+
+def test_resaving_a_token_never_resurrects_a_revoked_one(store: TokenStore) -> None:
+    store.save_token("access", "tok", "cid", ["a:read"], expires_at=None)
+    assert store.revoke("tok") == 1
+    with pytest.raises(sqlite3.IntegrityError):
+        store.save_token("access", "tok", "cid", ["a:read"], expires_at=None)
+    assert store.load_token("access", "tok", now=0) is None

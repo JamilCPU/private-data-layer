@@ -31,6 +31,10 @@ command's `  personal-assistant: <hash>` line goes under. The plaintext client s
 written once to `./pa.secret` (mode 0600; the command refuses to overwrite an existing file)
 and is never printed. Keep it for the headless client; delete it when you do not need it.
 
+On Windows, run these commands in bash (Git Bash), or write the output with
+`Set-Content -Encoding utf8`, not PowerShell `>`: `>` writes UTF-16, which the gateway refuses.
+The approval passphrase must be at least 12 characters.
+
 ## 2. Start the stack
 
 ```sh

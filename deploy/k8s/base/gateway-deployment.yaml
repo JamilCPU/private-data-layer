@@ -23,6 +23,10 @@ spec:
       # The PersistentVolume lives on the primary-worker node's disk, so the pod is pinned there.
       nodeSelector:
         kubernetes.io/hostname: primary-worker
+      # GHCR images of a private repo are private. Either push to the lab registry and set
+      # images[].newName in kustomization.yaml, or create the ghcr-pull Secret (README step 5)
+      # and uncomment:
+      # imagePullSecrets: [{name: ghcr-pull}]
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

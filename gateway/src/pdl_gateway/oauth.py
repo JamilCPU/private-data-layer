@@ -87,7 +87,14 @@ class GatewayAuthProvider:
         )
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        self._store.save_client(client_info)
+        """Store a DCR client as interactive: map down, never refuse a known scope.
+
+        The stored ``scope`` is every configured scope, which is only what the SDK's
+        ``/authorize`` check (``client.validate_scope``) accepts; codes and tokens are
+        always pinned to ``config.interactive_scopes`` in ``complete_approval``.
+        """
+        accepted = " ".join(self.config.scopes)
+        self._store.save_client(client_info.model_copy(update={"scope": accepted}))
         name = (client_info.client_name or "")[:80]
         logger.info("registered client %s (%r)", client_info.client_id, name)
 

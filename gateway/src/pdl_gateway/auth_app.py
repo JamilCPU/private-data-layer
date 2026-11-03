@@ -28,10 +28,14 @@ RESOURCE_NAME = "private-data-layer gateway"
 
 
 def _metadata_route(
-    issuer: AnyHttpUrl, registration: ClientRegistrationOptions, revocation: RevocationOptions
+    config: GatewayConfig,
+    registration: ClientRegistrationOptions,
+    revocation: RevocationOptions,
 ) -> Route:
+    issuer = AnyHttpUrl(config.issuer_url)
     metadata = build_metadata(issuer, None, registration, revocation).model_copy(
         update={
+            "scopes_supported": list(config.interactive_scopes),
             "grant_types_supported": list(GRANT_TYPES),
             "token_endpoint_auth_methods_supported": list(TOKEN_AUTH_METHODS),
         }
@@ -61,9 +65,12 @@ def build_auth_routes(
 ) -> list[Route]:
     """Metadata, /authorize, /token (wrapped), /register, /revoke, /approve and PRM routes."""
     issuer = AnyHttpUrl(config.issuer_url)
-    interactive = list(config.interactive_scopes)
+    # Clients (e.g. Claude Code) may ask for any configured scope; they are mapped down
+    # to the interactive grant rather than refused (see GatewayAuthProvider.register_client).
     registration = ClientRegistrationOptions(
-        enabled=True, valid_scopes=interactive, default_scopes=interactive
+        enabled=True,
+        valid_scopes=list(config.scopes),
+        default_scopes=list(config.interactive_scopes),
     )
     revocation = RevocationOptions(enabled=True)
     sdk_routes = create_auth_routes(
@@ -73,7 +80,7 @@ def build_auth_routes(
         revocation_options=revocation,
     )
     replacements = {
-        METADATA_PATH: _metadata_route(issuer, registration, revocation),
+        METADATA_PATH: _metadata_route(config, registration, revocation),
         TOKEN_PATH: _token_route(provider),
     }
     missing = set(replacements) - {route.path for route in sdk_routes}
@@ -85,7 +92,7 @@ def build_auth_routes(
         *create_protected_resource_routes(
             AnyHttpUrl(config.resource_url),
             [issuer],
-            scopes_supported=list(config.scopes),
+            scopes_supported=list(config.interactive_scopes),
             resource_name=RESOURCE_NAME,
         ),
     ]

@@ -1,10 +1,20 @@
 """Tests for the human approval page."""
 
+import asyncio
 import html
+from collections.abc import AsyncIterator
 
 import httpx
+import pytest
+from starlette.applications import Starlette
 
-from .oauth_helpers import begin, dcr
+from pdl_gateway.approval import ApprovalThrottle
+from pdl_gateway.auth_app import build_auth_routes
+from pdl_gateway.config import GatewayConfig
+from pdl_gateway.oauth import GatewayAuthProvider
+
+from .conftest import ISSUER, FakeClock
+from .oauth_helpers import REDIRECT, begin, dcr, decide
 
 UNKNOWN = "This approval request is unknown or has expired. Start again from your client."
 
@@ -62,3 +72,79 @@ async def test_post_approve_missing_fields_is_400(http: httpx.AsyncClient) -> No
     assert (await http.post("/approve", data=partial)).status_code == 400
     bogus = {**partial, "decision": "maybe"}
     assert (await http.post("/approve", data=bogus)).status_code == 400
+
+
+THROTTLED = "Too many attempts; try again in 10 minutes"
+
+
+@pytest.fixture
+def throttle_clock() -> FakeClock:
+    return FakeClock(1000.0)
+
+
+@pytest.fixture
+async def throttled(
+    config: GatewayConfig, provider: GatewayAuthProvider, throttle_clock: FakeClock
+) -> AsyncIterator[httpx.AsyncClient]:
+    throttle = ApprovalThrottle(limit=5, window_s=600, clock=throttle_clock)
+    app = Starlette(routes=build_auth_routes(config, provider, throttle=throttle))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ISSUER) as client:
+        yield client
+
+
+async def test_five_wrong_passphrases_lock_approvals_across_requests(
+    throttled: httpx.AsyncClient,
+) -> None:
+    client = await dcr(throttled)
+    first = await begin(throttled, client, state="a")
+    second = await begin(throttled, client, state="b")
+    for request_id in (first, first, first, second, second):
+        resp = await decide(throttled, request_id, "approve", passphrase="wrong")
+        assert resp.status_code == 200
+        assert "Wrong passphrase" in resp.text
+
+    fresh = await begin(throttled, client, state="c")  # a new request id does not help
+    resp = await decide(throttled, fresh, "approve")
+    assert resp.status_code == 429
+    assert THROTTLED in resp.text
+    assert resp.headers["cache-control"] == "no-store"
+    assert (await decide(throttled, first, "deny")).status_code == 429
+
+
+async def test_throttle_lifts_after_window(
+    throttled: httpx.AsyncClient, throttle_clock: FakeClock
+) -> None:
+    client = await dcr(throttled)
+    request_id = await begin(throttled, client)
+    for _ in range(5):
+        await decide(throttled, request_id, "approve", passphrase="wrong")
+    throttle_clock.advance(599)
+    assert (await decide(throttled, request_id, "approve")).status_code == 429
+
+    throttle_clock.advance(2)
+    resp = await decide(throttled, request_id, "approve")
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith(REDIRECT)
+
+
+async def test_concurrent_guesses_cannot_overrun_the_throttle(throttled: httpx.AsyncClient) -> None:
+    client = await dcr(throttled)
+    request_id = await begin(throttled, client)
+    guesses = [decide(throttled, request_id, "approve", passphrase=f"g{i}") for i in range(8)]
+    statuses = sorted(resp.status_code for resp in await asyncio.gather(*guesses))
+    assert statuses == [200] * 5 + [429] * 3
+
+
+def test_throttle_counts_only_failures_inside_the_window() -> None:
+    clock = FakeClock(0.0)
+    throttle = ApprovalThrottle(limit=3, window_s=100, clock=clock)
+    throttle.record_failure()
+    throttle.record_failure()
+    clock.advance(150)  # both earlier failures have aged out
+    throttle.record_failure()
+    throttle.record_failure()
+    assert not throttle.blocked()
+    throttle.record_failure()
+    assert throttle.blocked()
+    clock.advance(100)
+    assert not throttle.blocked()

@@ -1,5 +1,10 @@
 """The human approval page: shows the client and scopes, asks for the approval passphrase."""
 
+import asyncio
+import logging
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from html import escape
 
 from starlette.concurrency import run_in_threadpool
@@ -9,6 +14,8 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from pdl_gateway.oauth import ApprovalError, ApprovalView, GatewayAuthProvider
+
+logger = logging.getLogger(__name__)
 
 UNKNOWN_REQUEST = "This approval request is unknown or has expired. Start again from your client."
 _DECISIONS = {"approve": True, "deny": False}
@@ -23,6 +30,42 @@ _STYLE = (
     "body{font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}"
     ".error{color:#b00020}button{margin-right:.5rem}code{word-break:break-all}"
 )
+
+
+@dataclass(frozen=True)
+class _ThrottleState:
+    failures: tuple[float, ...] = ()
+    locked_until: float = float("-inf")
+
+
+class ApprovalThrottle:
+    """Locks approvals for ``window_s`` after ``limit`` wrong passphrases within ``window_s``.
+
+    Process-wide, never per request id, so new approval requests cannot reset the count.
+    Successful approvals do not lift a lock early.
+    """
+
+    def __init__(
+        self, limit: int = 5, window_s: float = 600.0, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        self.limit = limit
+        self.window_s = window_s
+        self._clock = clock
+        self._state = _ThrottleState()
+
+    def blocked(self) -> bool:
+        return self._clock() < self._state.locked_until
+
+    def record_failure(self) -> None:
+        now = self._clock()
+        recent = tuple(t for t in self._state.failures if now - t < self.window_s) + (now,)
+        if len(recent) >= self.limit:
+            logger.warning(
+                "approval locked for %ds after %d wrong passphrases", self.window_s, len(recent)
+            )
+            self._state = _ThrottleState((), now + self.window_s)
+        else:
+            self._state = _ThrottleState(recent, self._state.locked_until)
 
 
 def _page(body: str, status_code: int = 200) -> HTMLResponse:
@@ -65,8 +108,21 @@ def _field(form: FormData, name: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def build_approval_routes(provider: GatewayAuthProvider) -> list[Route]:
-    """``GET /approve`` renders the form; ``POST /approve`` completes or denies the request."""
+def _throttled(throttle: ApprovalThrottle) -> HTMLResponse:
+    minutes = round(throttle.window_s / 60)
+    message = f"Too many attempts; try again in {minutes} minutes"
+    return _page(f"<h1>Approve access</h1><p>{escape(message)}</p>", status_code=429)
+
+
+def build_approval_routes(
+    provider: GatewayAuthProvider, throttle: ApprovalThrottle | None = None
+) -> list[Route]:
+    """``GET /approve`` renders the form; ``POST /approve`` completes or denies the request.
+
+    Passphrase checks are serialised so concurrent guesses cannot overrun the throttle.
+    """
+    throttle = throttle if throttle is not None else ApprovalThrottle()
+    lock = asyncio.Lock()
 
     async def show(request: Request) -> Response:
         request_id = request.query_params.get("request")
@@ -74,21 +130,27 @@ def build_approval_routes(provider: GatewayAuthProvider) -> list[Route]:
         return _form(view) if view is not None else _unknown()
 
     async def submit(request: Request) -> Response:
+        if throttle.blocked():
+            return _throttled(throttle)
         form = await request.form()
         request_id = _field(form, "request")
         passphrase = _field(form, "passphrase")
         approved = _DECISIONS.get(_field(form, "decision") or "")
         if request_id is None or passphrase is None or approved is None:
             return _page("<h1>Approve access</h1><p>Incomplete form.</p>", status_code=400)
-        try:
-            url = await run_in_threadpool(
-                provider.complete_approval, request_id, passphrase, approved
-            )
-        except ApprovalError:
-            view = provider.approval_view(request_id)
-            return _form(view, "Wrong passphrase") if view is not None else _unknown()
-        except LookupError:
-            return _unknown()
+        async with lock:
+            if throttle.blocked():
+                return _throttled(throttle)
+            try:
+                url = await run_in_threadpool(
+                    provider.complete_approval, request_id, passphrase, approved
+                )
+            except ApprovalError:
+                throttle.record_failure()
+                view = provider.approval_view(request_id)
+                return _form(view, "Wrong passphrase") if view is not None else _unknown()
+            except LookupError:
+                return _unknown()
         return RedirectResponse(url, status_code=303, headers={"Cache-Control": "no-store"})
 
     return [

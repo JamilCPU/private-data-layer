@@ -11,10 +11,10 @@ WORKDIR /app
 
 # Dependencies first so source edits do not invalidate this layer.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-editable --no-install-project
+RUN uv sync --locked --no-dev --no-editable --no-install-project
 
 COPY src ./src
-RUN uv sync --frozen --no-dev --no-editable
+RUN uv sync --locked --no-dev --no-editable
 
 RUN groupadd --system --gid 10001 pdl \
     && useradd --system --uid 10001 --gid pdl --no-create-home --shell /usr/sbin/nologin pdl \

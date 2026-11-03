@@ -24,13 +24,15 @@ from pdl_gateway.backends import (
 )
 from pdl_gateway.config import ConfigError, GatewayConfig
 
-from .conftest import STUB_URL, HeaderRecorder
+from .backend_helpers import fake_server, mock_factory
+from .conftest import STUB_URL, RequestRecorder, serve_stub
 
 AsgiFactory = Callable[[ASGIApp], McpHttpClientFactory]
 SECRET = "s3cret-value"
+HANDSHAKE = ["initialize", "notifications/initialized"]
 
 
-def _homestudio(stub: HeaderRecorder, factory: AsgiFactory) -> RemoteBackend:
+def _homestudio(stub: RequestRecorder, factory: AsgiFactory) -> RemoteBackend:
     return RemoteBackend(
         "homestudio",
         "homestudio:read",
@@ -41,7 +43,7 @@ def _homestudio(stub: HeaderRecorder, factory: AsgiFactory) -> RemoteBackend:
 
 
 async def test_list_tools_passthrough(
-    homestudio_stub: HeaderRecorder, asgi_factory: AsgiFactory
+    homestudio_stub: RequestRecorder, asgi_factory: AsgiFactory
 ) -> None:
     backend = _homestudio(homestudio_stub, asgi_factory)
 
@@ -50,10 +52,11 @@ async def test_list_tools_passthrough(
     assert {t.name for t in tools} == {"get_taste_profile", "list_queue"}
     assert homestudio_stub.requests, "the stub saw no requests"
     assert all(r.get("x-gateway-secret") == SECRET for r in homestudio_stub.requests)
+    assert homestudio_stub.methods == [*HANDSHAKE, "tools/list"]
 
 
 async def test_allowlist_filters_list_and_call(
-    automations_stub: HeaderRecorder, asgi_factory: AsgiFactory
+    automations_stub: RequestRecorder, asgi_factory: AsgiFactory
 ) -> None:
     backend = RemoteBackend(
         "automations",
@@ -74,7 +77,7 @@ async def test_allowlist_filters_list_and_call(
 
 
 async def test_call_tool_returns_result(
-    automations_stub: HeaderRecorder, asgi_factory: AsgiFactory
+    automations_stub: RequestRecorder, asgi_factory: AsgiFactory
 ) -> None:
     backend = RemoteBackend(
         "automations",
@@ -91,10 +94,32 @@ async def test_call_tool_returns_result(
     assert not result.isError
     assert result.content
     assert automations_stub.requests[-1]["authorization"] == "Bearer tok"
+    assert automations_stub.methods == [*HANDSHAKE, "tools/call"], "no hidden tools/list"
+
+
+def explode(device: str) -> dict:
+    raise RuntimeError(f"cannot reach {device}")
+
+
+async def test_tool_error_result_is_passed_through(asgi_factory: AsgiFactory) -> None:
+    async for stub in serve_stub({"explode": explode}, "automations"):
+        backend = RemoteBackend(
+            "automations",
+            "automations:read",
+            STUB_URL,
+            {},
+            httpx_client_factory=asgi_factory(stub),
+        )
+
+        result = await backend.call_tool("explode", {"device": "pi-host"})
+
+    assert result.isError
+    assert isinstance(result.content[0], mcp.types.TextContent)
+    assert "cannot reach pi-host" in result.content[0].text
 
 
 async def test_call_tool_passes_arguments(
-    automations_stub: HeaderRecorder, asgi_factory: AsgiFactory
+    automations_stub: RequestRecorder, asgi_factory: AsgiFactory
 ) -> None:
     backend = RemoteBackend(
         "automations",
@@ -119,17 +144,6 @@ async def test_unreachable_raises_backend_unavailable() -> None:
         await backend.call_tool("list_queue", {})
 
 
-def _mock_factory(handler: Callable[[httpx.Request], httpx.Response]) -> McpHttpClientFactory:
-    def factory(
-        headers: dict[str, str] | None = None,
-        timeout: httpx.Timeout | None = None,
-        auth: httpx.Auth | None = None,
-    ) -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=httpx.MockTransport(handler), headers=headers)
-
-    return factory
-
-
 async def test_rejected_auth_raises_backend_unavailable() -> None:
     def unauthorized(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "bad secret"})
@@ -139,7 +153,7 @@ async def test_rejected_auth_raises_backend_unavailable() -> None:
         "homestudio:read",
         STUB_URL,
         {},
-        httpx_client_factory=_mock_factory(unauthorized),
+        httpx_client_factory=mock_factory(unauthorized),
     )
 
     with pytest.raises(BackendUnavailable, match="^homestudio: .*401 Unauthorized[^\n]*$"):
@@ -155,7 +169,7 @@ async def test_timeout_raises_backend_unavailable() -> None:
         "automations:read",
         STUB_URL,
         {},
-        httpx_client_factory=_mock_factory(hang),
+        httpx_client_factory=mock_factory(hang),
     )
 
     with pytest.raises(BackendUnavailable, match="^automations: "):
@@ -173,12 +187,25 @@ async def test_hung_backend_hits_deadline() -> None:
         STUB_URL,
         {},
         timeout_s=0.2,
-        httpx_client_factory=_mock_factory(hang),
+        httpx_client_factory=mock_factory(hang),
     )
 
     with anyio.fail_after(5):
         with pytest.raises(BackendUnavailable, match="^automations: timed out$"):
             await backend.list_tools()
+
+
+async def test_wrong_shaped_result_raises_backend_unavailable() -> None:
+    backend = RemoteBackend(
+        "homestudio",
+        "homestudio:read",
+        STUB_URL,
+        {},
+        httpx_client_factory=fake_server({"tools/list": {"tools": "not-a-list"}}),
+    )
+
+    with pytest.raises(BackendUnavailable, match="^homestudio: .*validation error"):
+        await backend.list_tools()
 
 
 async def test_json_rpc_error_raises_backend_unavailable() -> None:
@@ -188,7 +215,7 @@ async def test_json_rpc_error_raises_backend_unavailable() -> None:
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "error": error})
 
     backend = RemoteBackend(
-        "homestudio", "homestudio:read", STUB_URL, {}, httpx_client_factory=_mock_factory(refuse)
+        "homestudio", "homestudio:read", STUB_URL, {}, httpx_client_factory=mock_factory(refuse)
     )
 
     with pytest.raises(BackendUnavailable, match="^homestudio: initialize refused$"):
@@ -200,12 +227,27 @@ async def test_programming_errors_are_not_disguised_as_unavailable() -> None:
         raise ValueError("bug in the client stack")
 
     backend = RemoteBackend(
-        "homestudio", "homestudio:read", STUB_URL, {}, httpx_client_factory=_mock_factory(broken)
+        "homestudio", "homestudio:read", STUB_URL, {}, httpx_client_factory=mock_factory(broken)
     )
 
-    with pytest.raises(BaseException) as caught:
+    with pytest.raises(ValueError, match="bug in the client stack"):
         await backend.list_tools()
-    assert not isinstance(caught.value, BackendUnavailable)
+
+
+async def test_factory_errors_propagate_unchanged() -> None:
+    def bad_factory(
+        headers: dict[str, str] | None = None,
+        timeout: httpx.Timeout | None = None,
+        auth: httpx.Auth | None = None,
+    ) -> httpx.AsyncClient:
+        raise TypeError("factory misconfigured")
+
+    backend = RemoteBackend(
+        "homestudio", "homestudio:read", STUB_URL, {}, httpx_client_factory=bad_factory
+    )
+
+    with pytest.raises(TypeError, match="factory misconfigured"):
+        await backend.list_tools()
 
 
 def test_ca_file_factory_verifies_with_that_ca(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -218,22 +260,14 @@ def test_ca_file_factory_verifies_with_that_ca(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(backends.ssl, "create_default_context", spy)
 
-    client = client_factory_for(certifi.where())(headers={"X-Test": "1"})
+    factory = client_factory_for(certifi.where())
+    client = factory(headers={"X-Test": "1"})
+    factory()
 
     assert isinstance(client, httpx.AsyncClient)
-    assert cafiles == [certifi.where()]
+    assert cafiles == [certifi.where()], "the TLS context is built once, not per client"
     assert client.headers["X-Test"] == "1"
     assert client.timeout.read == 300.0
-
-
-async def test_missing_ca_file_raises_backend_unavailable(tmp_path: Path) -> None:
-    missing = str(tmp_path / "absent-ca.pem")
-    backend = RemoteBackend(
-        "automations", "automations:read", "https://127.0.0.1:9/mcp", {}, ca_file=missing
-    )
-
-    with pytest.raises(BackendUnavailable, match="^automations: "):
-        await backend.list_tools()
 
 
 def test_no_ca_file_uses_sdk_default_factory() -> None:
@@ -244,11 +278,18 @@ def _env() -> dict[str, str]:
     return {"HOMESTUDIO_MCP_SECRET": "hs-secret", "AUTOMATIONS_MCP_TOKEN": "auto-token"}
 
 
+def _with_automations(config: GatewayConfig, **changes: object) -> GatewayConfig:
+    homestudio, automations = config.backends
+    return dataclasses.replace(
+        config, backends=(homestudio, dataclasses.replace(automations, **changes))
+    )
+
+
 def test_build_backends_headers(config: GatewayConfig, monkeypatch: pytest.MonkeyPatch) -> None:
     for key, value in _env().items():
         monkeypatch.setenv(key, value)
 
-    built = build_backends(config, os.environ)
+    built = build_backends(_with_automations(config, ca_file=certifi.where()), os.environ)
 
     assert [b.name for b in built] == ["homestudio", "automations"]
     homestudio, automations = built
@@ -258,7 +299,7 @@ def test_build_backends_headers(config: GatewayConfig, monkeypatch: pytest.Monke
     assert dict(automations.headers) == {"Authorization": "Bearer auto-token"}
     assert homestudio.allow_tools is None
     assert automations.allow_tools is not None and "recent_history" in automations.allow_tools
-    assert automations.ca_file == "/etc/pdl/automations-ca.pem"
+    assert automations.ca_file == certifi.where()
     assert (homestudio.scope, automations.scope) == ("homestudio:read", "automations:read")
 
 
@@ -302,3 +343,41 @@ def test_build_backends_rejects_secret_without_header(config: GatewayConfig) -> 
 
     with pytest.raises(ConfigError, match="secret_header"):
         build_backends(headerless, _env())
+
+
+def test_build_backends_missing_ca_file_is_config_error(
+    config: GatewayConfig, tmp_path: Path
+) -> None:
+    missing = str(tmp_path / "absent-ca.pem")
+
+    with pytest.raises(ConfigError, match="absent-ca.pem"):
+        build_backends(_with_automations(config, ca_file=missing), _env())
+
+
+def test_build_backends_unreadable_ca_file_is_config_error(
+    config: GatewayConfig, tmp_path: Path
+) -> None:
+    garbage = tmp_path / "garbage.pem"
+    garbage.write_text("not a certificate", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="garbage.pem"):
+        build_backends(_with_automations(config, ca_file=str(garbage)), _env())
+
+
+def test_build_backends_ca_file_needs_https(config: GatewayConfig) -> None:
+    changed = _with_automations(
+        config, url="http://automations-mcp:7702/mcp", ca_file=certifi.where()
+    )
+
+    with pytest.raises(ConfigError, match="ca_file needs an https url"):
+        build_backends(changed, _env())
+
+
+@pytest.mark.parametrize(
+    "url", ["ftp://automations-mcp/mcp", "https:///mcp", "automations-mcp/mcp"]
+)
+def test_build_backends_rejects_bad_url(config: GatewayConfig, url: str) -> None:
+    changed = _with_automations(config, url=url, ca_file=None)
+
+    with pytest.raises(ConfigError, match="url must be"):
+        build_backends(changed, _env())

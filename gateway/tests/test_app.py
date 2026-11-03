@@ -14,6 +14,7 @@ import yaml
 from asgi_lifespan import LifespanManager
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server.auth.provider import AccessToken
 from starlette.applications import Starlette
 
 from pdl_gateway import __main__ as entry
@@ -239,9 +240,9 @@ class _Named:
 @pytest.mark.parametrize(
     ("names", "clash"),
     [
-        (["home", "home_studio"], "'home' and 'home_studio'"),
+        (["home", "home_studio", "home_x"], "'home' and 'home_studio'; 'home' and 'home_x'"),
         (["gateway_extra"], "'gateway' and 'gateway_extra'"),
-        (["gateway"], "duplicate backend name 'gateway'"),
+        (["gateway"], r"duplicate backend name\(s\): 'gateway'"),
     ],
     ids=["prefix", "prefix-of-audit-backend", "duplicate"],
 )
@@ -261,6 +262,48 @@ async def test_build_app_owns_store_and_audit_when_not_given(
         resp = await client_credentials(gw, "personal-assistant", PA_SECRET)
         assert resp.status_code == 200, resp.text
     assert Path(config.db_path).exists()
+
+
+@pytest.mark.parametrize(
+    "resource", ["http://evil.example/mcp", None], ids=["foreign-resource", "no-resource"]
+)
+async def test_token_for_another_resource_is_401(
+    gw: httpx.AsyncClient,
+    provider: GatewayAuthProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    resource: str | None,
+) -> None:
+    token = provider.issue_client_credentials("personal-assistant", PA_SECRET).access_token
+    assert (await _probe(gw, token)).status_code == 200
+    original = GatewayAuthProvider.load_access_token
+
+    async def foreign(self: GatewayAuthProvider, value: str) -> AccessToken | None:
+        loaded = await original(self, value)
+        return loaded.model_copy(update={"resource": resource}) if loaded else None
+
+    # The app builds its own provider, so the class is patched: its tokens now name `resource`.
+    monkeypatch.setattr(GatewayAuthProvider, "load_access_token", foreign)
+    _assert_401(await _probe(gw, token))
+
+
+def test_build_app_closes_its_store_when_assembly_fails(
+    config: GatewayConfig, secrets: GatewaySecrets, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("assembly failed")
+
+    closed: list[bool] = []
+
+    class RecordingStore(TokenStore):
+        def close(self) -> None:
+            closed.append(True)
+            super().close()
+
+    monkeypatch.setattr("pdl_gateway.app.TokenStore", RecordingStore)
+    monkeypatch.setattr("pdl_gateway.app.build_proxy_server", broken)
+    with pytest.raises(RuntimeError, match="assembly failed"):
+        build_app(config, secrets, [])
+    assert closed == [True]
 
 
 # --- entry point -------------------------------------------------------------

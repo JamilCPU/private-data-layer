@@ -27,7 +27,9 @@ USER 10001:10001
 EXPOSE 8787
 VOLUME /data
 
+# GATEWAY_PORT must match listen_port in the gateway config (default 8787).
+ENV GATEWAY_PORT=8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=4)"]
+    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.environ.get('GATEWAY_PORT', '8787')}/healthz\", timeout=4)"]
 
 CMD ["pdl-gateway"]

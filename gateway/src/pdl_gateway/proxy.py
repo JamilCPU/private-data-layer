@@ -56,6 +56,22 @@ def split_tool_name(name: str, backend_names: Sequence[str]) -> tuple[str, str] 
     return None
 
 
+def _declares_writes(tool: Tool) -> bool:
+    """True when the backend itself says the tool is not read-only or is destructive."""
+    hints = tool.annotations
+    return hints is not None and (hints.readOnlyHint is False or hints.destructiveHint is True)
+
+
+def _read_only_tools(backend: str, tools: Sequence[Tool]) -> tuple[Tool, ...]:
+    """Drop tools that declare writes (v1 is read-only); unannotated tools are kept."""
+    dropped = sorted(tool.name for tool in tools if _declares_writes(tool))
+    if dropped:
+        logger.warning(
+            "backend %s: hiding tool(s) that are not read-only: %s", backend, ", ".join(dropped)
+        )
+    return tuple(tool for tool in tools if not _declares_writes(tool))
+
+
 @dataclass(frozen=True)
 class _CachedList:
     tools: tuple[Tool, ...]
@@ -63,7 +79,11 @@ class _CachedList:
 
 
 class _ToolCache:
-    """Per-backend tool lists, refreshed lazily after ``ttl_s``; stale lists outlive failures."""
+    """Per-backend read-only tool lists, refreshed lazily after ``ttl_s``.
+
+    Stale lists outlive failures. Tools declaring writes are filtered out on each refresh,
+    so they are neither listed nor callable.
+    """
 
     def __init__(self, ttl_s: float, clock: Callable[[], float]) -> None:
         self._ttl_s = ttl_s
@@ -77,7 +97,7 @@ class _ToolCache:
         if cached is not None and now - cached.fetched_at < self._ttl_s:
             return cached.tools
         try:
-            tools = tuple(await backend.list_tools())
+            tools = _read_only_tools(backend.name, await backend.list_tools())
         except BackendUnavailable as exc:
             if cached is None:
                 raise

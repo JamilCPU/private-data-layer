@@ -16,9 +16,10 @@ from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOption
 from pydantic import AnyHttpUrl
 from starlette.routing import Route, request_response
 
-from pdl_gateway.approval import ApprovalThrottle, build_approval_routes
+from pdl_gateway.approval import build_approval_routes
 from pdl_gateway.config import GatewayConfig
 from pdl_gateway.oauth import GatewayAuthProvider
+from pdl_gateway.throttle import AttemptThrottle
 from pdl_gateway.token_route import build_token_endpoint
 
 METADATA_PATH = "/.well-known/oauth-authorization-server"
@@ -47,9 +48,9 @@ def _metadata_route(
     )
 
 
-def _token_route(provider: GatewayAuthProvider) -> Route:
+def _token_route(provider: GatewayAuthProvider, throttle: AttemptThrottle) -> Route:
     sdk_handler = TokenHandler(provider, ClientAuthenticator(provider))
-    endpoint = request_response(build_token_endpoint(provider, sdk_handler))
+    endpoint = request_response(build_token_endpoint(provider, sdk_handler, throttle))
     return Route(
         TOKEN_PATH,
         endpoint=_cors(_body_limited(endpoint), ["POST", "OPTIONS"]),
@@ -61,9 +62,14 @@ def build_auth_routes(
     config: GatewayConfig,
     provider: GatewayAuthProvider,
     *,
-    throttle: ApprovalThrottle | None = None,
+    throttle: AttemptThrottle | None = None,
+    token_throttle: AttemptThrottle | None = None,
 ) -> list[Route]:
-    """Metadata, /authorize, /token (wrapped), /register, /revoke, /approve and PRM routes."""
+    """Metadata, /authorize, /token (wrapped), /register, /revoke, /approve and PRM routes.
+
+    ``throttle`` guards approval passphrases and ``token_throttle`` client secrets; each
+    defaults to its own fresh instance, so a lock on one never blocks the other.
+    """
     issuer = AnyHttpUrl(config.issuer_url)
     # Clients (e.g. Claude Code) may ask for any configured scope; they are mapped down
     # to the interactive grant rather than refused (see GatewayAuthProvider.register_client).
@@ -81,7 +87,10 @@ def build_auth_routes(
     )
     replacements = {
         METADATA_PATH: _metadata_route(config, registration, revocation),
-        TOKEN_PATH: _token_route(provider),
+        TOKEN_PATH: _token_route(
+            provider,
+            token_throttle if token_throttle is not None else AttemptThrottle(what="token"),
+        ),
     }
     missing = set(replacements) - {route.path for route in sdk_routes}
     if missing:

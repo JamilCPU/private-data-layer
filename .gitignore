@@ -26,3 +26,7 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+
+# compose dev secrets
+deploy/compose/secrets.dev.yaml
+deploy/compose/*.secret

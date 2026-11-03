@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  namespace: pdl
+  labels:
+    app: gateway
+    app.kubernetes.io/part-of: private-data-layer
+  annotations:
+    cert-manager.io/cluster-issuer: lab-ca
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [gateway.lab]
+      secretName: gateway-lab-tls
+  rules:
+    - host: gateway.lab
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 8787

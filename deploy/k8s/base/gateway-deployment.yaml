@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: pdl
+  labels:
+    app: gateway
+    app.kubernetes.io/part-of: private-data-layer
+spec:
+  replicas: 1
+  # SQLite on a ReadWriteOnce volume: never run two gateways at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+        app.kubernetes.io/part-of: private-data-layer
+    spec:
+      # The PersistentVolume lives on the primary-worker node's disk, so the pod is pinned there.
+      nodeSelector:
+        kubernetes.io/hostname: primary-worker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          image: ghcr.io/jamilcpu/pdl-gateway:latest
+          ports:
+            - name: http
+              containerPort: 8787
+          # Only the two backend credentials become env vars. Taking the whole Secret with
+          # envFrom would also try to import its secrets.yaml key.
+          env:
+            - name: HOMESTUDIO_MCP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-secrets
+                  key: HOMESTUDIO_MCP_SECRET
+            - name: AUTOMATIONS_MCP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-secrets
+                  key: AUTOMATIONS_MCP_TOKEN
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8787
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8787
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pdl/gateway.yaml
+              subPath: gateway.yaml
+              readOnly: true
+            - name: secrets
+              mountPath: /etc/pdl/secrets.yaml
+              subPath: secrets.yaml
+              readOnly: true
+            - name: automations-ca
+              mountPath: /etc/pdl/automations-ca.pem
+              subPath: automations-ca.pem
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: gateway-config
+        - name: secrets
+          secret:
+            secretName: gateway-secrets
+            items:
+              - key: secrets.yaml
+                path: secrets.yaml
+            defaultMode: 288 # 0440, readable through fsGroup 10001
+        # CA that signed the Automations MCP certificate. Created by hand (README step 5);
+        # not in the kustomization because it comes from the migration, not from this repo.
+        - name: automations-ca
+          configMap:
+            name: automations-ca
+        - name: data
+          persistentVolumeClaim:
+            claimName: gateway-data

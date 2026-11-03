@@ -1,12 +1,14 @@
 """Tests for the append-only audit log and the gateway audit_search backend."""
 
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import mcp.types
+import pytest
 
-from pdl_gateway.audit import AuditEntry, AuditLog, hash_args
+from pdl_gateway.audit import MAX_ERROR_CHARS, AuditEntry, AuditLog, hash_args, truncate_error
 from pdl_gateway.audit_backend import AuditBackend
 
 DAY1 = datetime(2026, 11, 2, 9, 0, tzinfo=UTC)
@@ -158,9 +160,67 @@ async def test_audit_backend_bad_since_is_error(tmp_path: Path) -> None:
 
 async def test_audit_backend_bad_limit_and_unknown_tool(tmp_path: Path) -> None:
     backend = AuditBackend(AuditLog(tmp_path))
-    bad_limit = await backend.call_tool(
-        "audit_search", {"since": DAY1.isoformat(), "limit": 0}
-    )
+    bad_limit = await backend.call_tool("audit_search", {"since": DAY1.isoformat(), "limit": 0})
     assert bad_limit.isError
     unknown = await backend.call_tool("nope", {})
     assert unknown.isError
+
+
+def test_search_from_year_one_is_fast_and_correct(tmp_path: Path) -> None:
+    log = AuditLog(tmp_path)
+    log.record(_entry(DAY1, tool="t1"))
+    log.record(_entry(DAY2, tool="t2"))
+    (tmp_path / "audit-notadate.jsonl").write_text("{}\n", encoding="utf-8")
+
+    started = time.perf_counter()
+    found = log.search(datetime(1, 1, 1, tzinfo=UTC), until=DAY2 + timedelta(hours=1))
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 1.0
+    assert [e.tool for e in found] == ["t2", "t1"]
+
+
+def test_search_ignores_files_outside_date_range(tmp_path: Path) -> None:
+    log = AuditLog(tmp_path)
+    log.record(_entry(DAY1, tool="old"))
+    log.record(_entry(DAY2, tool="new"))
+    found = log.search(DAY2 - timedelta(hours=1), until=DAY2 + timedelta(hours=1))
+    assert [e.tool for e in found] == ["new"]
+
+
+def test_extreme_timestamp_raises_value_error(tmp_path: Path) -> None:
+    extreme = datetime.fromisoformat("0001-01-01T00:00:00+05:00")
+    with pytest.raises(ValueError):
+        AuditLog(tmp_path).search(extreme)
+
+
+def test_record_repairs_missing_trailing_newline(tmp_path: Path) -> None:
+    log = AuditLog(tmp_path)
+    path = tmp_path / "audit-2026-11-02.jsonl"
+    path.write_bytes(b'{"partial": tru')
+    log.record(_entry(DAY1, tool="after-crash"))
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert AuditEntry.from_json(lines[1]).tool == "after-crash"
+    assert [e.tool for e in log.search(DAY1, until=DAY2)] == ["after-crash"]
+
+
+def test_same_timestamp_entries_come_out_newest_written_first(tmp_path: Path) -> None:
+    log = AuditLog(tmp_path)
+    for tool in ("first", "second", "third"):
+        log.record(_entry(DAY1, tool=tool))
+    assert [e.tool for e in log.search(DAY1, until=DAY2)] == ["third", "second", "first"]
+
+
+def test_truncate_error() -> None:
+    assert truncate_error(None) is None
+    assert truncate_error("short") == "short"
+    assert truncate_error("x" * (MAX_ERROR_CHARS + 50)) == "x" * MAX_ERROR_CHARS
+
+
+async def test_audit_backend_extreme_since_is_error(tmp_path: Path) -> None:
+    backend = AuditBackend(AuditLog(tmp_path))
+    result = await backend.call_tool("audit_search", {"since": "0001-01-01T00:00:00+05:00"})
+    assert result.isError
+    assert result.content[0].text == "since must be an ISO 8601 timestamp"

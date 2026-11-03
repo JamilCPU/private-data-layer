@@ -1,5 +1,6 @@
 """In-process backend exposing the audit log to agents as the ``audit_search`` tool."""
 
+import asyncio
 import json
 from dataclasses import asdict
 from datetime import datetime
@@ -9,6 +10,7 @@ import mcp.types
 
 from pdl_gateway.audit import AuditLog
 
+_SINCE_ERROR = "since must be an ISO 8601 timestamp"
 _MAX_LIMIT = 500
 _DEFAULT_LIMIT = 100
 
@@ -56,13 +58,18 @@ class AuditBackend:
             return _error(f"unknown tool: {name}")
         try:
             since = datetime.fromisoformat(str(arguments["since"]))
-        except (KeyError, ValueError):
-            return _error("since must be an ISO 8601 timestamp")
+        except (KeyError, ValueError, OverflowError):
+            return _error(_SINCE_ERROR)
         limit = _parse_limit(arguments.get("limit", _DEFAULT_LIMIT))
         if limit is None:
             return _error(f"limit must be an integer between 1 and {_MAX_LIMIT}")
         client_id = arguments.get("client_id")
-        entries = self._log.search(since, client_id=client_id, limit=limit)
+        try:
+            entries = await asyncio.to_thread(
+                self._log.search, since, client_id=client_id, limit=limit
+            )
+        except (ValueError, OverflowError):
+            return _error(_SINCE_ERROR)
         payload = {"entries": [asdict(entry) for entry in entries]}
         return mcp.types.CallToolResult(
             content=[mcp.types.TextContent(type="text", text=json.dumps(payload))],

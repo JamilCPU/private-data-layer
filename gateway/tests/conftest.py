@@ -1,24 +1,30 @@
-"""Shared fixtures: config, secrets, store, fake clock, OAuth provider, auth app, stub backends."""
+"""Shared fixtures: config, secrets, store, clock, OAuth, stub backends, gateway sessions."""
 
 import dataclasses
 import json
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
+from mcp.client.session import ClientSession
 from mcp.server.fastmcp import FastMCP
+from mcp.server.lowlevel import Server
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared._httpx_utils import McpHttpClientFactory
+from mcp.shared.memory import create_connected_server_and_client_session
 from starlette.applications import Starlette
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from pdl_gateway import proxy
 from pdl_gateway.auth_app import build_auth_routes
 from pdl_gateway.config import GatewayConfig, GatewaySecrets, load_config
 from pdl_gateway.oauth import GatewayAuthProvider
+from pdl_gateway.proxy import Caller
 from pdl_gateway.secrets import hash_secret
 from pdl_gateway.store import TokenStore
 
@@ -205,3 +211,16 @@ def _asgi_factory(app: ASGIApp) -> McpHttpClientFactory:
 def asgi_factory() -> Callable[[ASGIApp], McpHttpClientFactory]:
     """``asgi_factory(app)`` returns an MCP client factory that talks to ``app`` in-process."""
     return _asgi_factory
+
+
+@asynccontextmanager
+async def gateway_session(
+    server: Server, caller: Caller | None, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[ClientSession]:
+    """An initialized client session on ``server`` over memory streams, authenticated as ``caller``.
+
+    The in-memory transport carries no HTTP request, so the caller lookup is patched instead.
+    """
+    monkeypatch.setattr(proxy, "caller_from_request", lambda request: caller)
+    async with create_connected_server_and_client_session(server) as session:
+        yield session

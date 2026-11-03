@@ -16,7 +16,7 @@ from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOption
 from pydantic import AnyHttpUrl
 from starlette.routing import Route, request_response
 
-from pdl_gateway.approval import build_approval_routes
+from pdl_gateway.approval import ApprovalThrottle, build_approval_routes
 from pdl_gateway.config import GatewayConfig
 from pdl_gateway.oauth import GatewayAuthProvider
 from pdl_gateway.token_route import build_token_endpoint
@@ -53,7 +53,12 @@ def _token_route(provider: GatewayAuthProvider) -> Route:
     )
 
 
-def build_auth_routes(config: GatewayConfig, provider: GatewayAuthProvider) -> list[Route]:
+def build_auth_routes(
+    config: GatewayConfig,
+    provider: GatewayAuthProvider,
+    *,
+    throttle: ApprovalThrottle | None = None,
+) -> list[Route]:
     """Metadata, /authorize, /token (wrapped), /register, /revoke, /approve and PRM routes."""
     issuer = AnyHttpUrl(config.issuer_url)
     interactive = list(config.interactive_scopes)
@@ -76,7 +81,7 @@ def build_auth_routes(config: GatewayConfig, provider: GatewayAuthProvider) -> l
         raise RuntimeError(f"MCP SDK auth routes changed; cannot replace {sorted(missing)}")
     return [
         *(replacements.get(route.path, route) for route in sdk_routes),
-        *build_approval_routes(provider),
+        *build_approval_routes(provider, throttle),
         *create_protected_resource_routes(
             AnyHttpUrl(config.resource_url),
             [issuer],

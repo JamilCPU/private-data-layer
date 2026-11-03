@@ -360,3 +360,24 @@ async def test_result_withheld_when_audit_write_fails(tmp_path, monkeypatch) -> 
 
     assert result.isError is True
     assert _text(result) == "internal error"
+
+
+def _boom(arguments: Any) -> str:
+    raise TypeError("cannot hash")
+
+
+async def test_audit_entry_failure_is_internal_error_and_still_audited(
+    tmp_path, monkeypatch
+) -> None:
+    log = _audit(tmp_path)
+    server = build_proxy_server([CountingBackend()], log)
+    monkeypatch.setattr("pdl_gateway.proxy.hash_args", _boom)
+
+    async with gateway_session(server, COUNT, monkeypatch) as session:
+        result = await session.call_tool("count_ping", {"x": 1})
+
+    assert result.isError is True
+    assert _text(result) == "internal error"
+    [entry] = _entries(log)
+    assert (entry.client_id, entry.tool, entry.error) == ("agent-4", "count_ping", "internal error")
+    assert entry.args_sha256 == ""

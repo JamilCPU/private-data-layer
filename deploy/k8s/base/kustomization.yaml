@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - gateway-configmap.yaml
+  - gateway-pvc.yaml
+  - gateway-deployment.yaml
+  - gateway-service.yaml
+  - gateway-ingress.yaml
+  - homestudio-mcp-deployment.yaml
+  - homestudio-mcp-service.yaml
+  - homestudio-mcp-networkpolicy.yaml
+# Change newName to move an image to another registry; pin newTag (for example a commit SHA) to deploy.
+images:
+  - name: ghcr.io/jamilcpu/pdl-gateway
+    newName: ghcr.io/jamilcpu/pdl-gateway
+    newTag: latest
+  - name: ghcr.io/jamilcpu/homestudio-mcp
+    newName: ghcr.io/jamilcpu/homestudio-mcp
+    newTag: latest
+# Not listed on purpose: the gateway-secrets Secret and the automations-ca ConfigMap are
+# created by hand (see ../README.md). ../gateway-secret.example.yaml documents the Secret.

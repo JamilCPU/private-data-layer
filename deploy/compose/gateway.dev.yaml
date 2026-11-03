@@ -1,0 +1,35 @@
+# Gateway config for the local compose stack (see docker-compose.yml).
+# Production config lives in deploy/k8s/base/gateway-configmap.yaml.
+issuer_url: http://localhost:8787
+resource_url: http://localhost:8787/mcp
+listen_host: 0.0.0.0
+listen_port: 8787
+db_path: /data/gateway.db
+audit_dir: /data/audit
+scopes: [homestudio:read, automations:read, email:read, sms:read, bank:read, search:read, gateway:audit]
+backends:
+  - name: homestudio
+    url: http://homestudio-mcp:8000/mcp
+    scope: homestudio:read
+    secret_header: X-Gateway-Secret
+    secret_env: HOMESTUDIO_MCP_SECRET
+  # The automations backend needs the Personal Automations MCP server, which the
+  # compose stack does not run. To try it against a real one, uncomment this block,
+  # point `url` at it, and then:
+  #   - export AUTOMATIONS_MCP_TOKEN in .env and add it under the gateway's `environment:`
+  #     in docker-compose.yml (the gateway reads the bearer token from that variable);
+  #   - if the server's TLS certificate is signed by the lab CA, mount that CA file into
+  #     the gateway container at the `ca_file` path below. A plain http:// URL needs no CA.
+  # - name: automations
+  #   url: https://automations-mcp.example.lab:7702/mcp
+  #   scope: automations:read
+  #   bearer_env: AUTOMATIONS_MCP_TOKEN
+  #   ca_file: /etc/pdl/automations-ca.pem
+  #   allow_tools: [list_devices, get_device, list_programs, get_program, get_program_logs, get_usb_power, recent_history]
+grants:
+  - name: personal-assistant
+    kind: headless
+    scopes: [homestudio:read, automations:read, email:read, sms:read, bank:read, search:read, gateway:audit]
+  - name: interactive-default
+    kind: interactive
+    scopes: [homestudio:read, automations:read]

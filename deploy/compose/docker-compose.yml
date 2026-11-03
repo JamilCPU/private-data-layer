@@ -1,0 +1,58 @@
+# Local development stack: gateway + homestudio-mcp + a fixture Home Studio stub.
+# Create gateway secrets and .env first; see README.md.
+services:
+  gateway:
+    build: ../../gateway
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./gateway.dev.yaml:/etc/pdl/gateway.yaml:ro
+      - ./secrets.dev.yaml:/etc/pdl/secrets.yaml:ro
+      - gateway-data:/data
+    environment:
+      HOMESTUDIO_MCP_SECRET: ${HOMESTUDIO_MCP_SECRET:?copy .env.example to .env and set it}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8787/healthz", timeout=4)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  homestudio-mcp:
+    image: ghcr.io/jamilcpu/homestudio-mcp:latest
+    environment:
+      HOMESTUDIO_API_URL: http://homestudio-stub:8765
+      HOMESTUDIO_MCP_SHARED_SECRET: ${HOMESTUDIO_MCP_SECRET:?copy .env.example to .env and set it}
+    depends_on:
+      homestudio-stub:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=4)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  homestudio-stub:
+    build: ./stub-homestudio
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8765/api/status", timeout=4)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  gateway-data:

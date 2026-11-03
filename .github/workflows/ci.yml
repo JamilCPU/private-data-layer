@@ -21,11 +21,20 @@ jobs:
       - run: uv run pytest -q
       - run: uv run ruff check .
 
-  # stub: job added in Task 10.
+  stub:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/compose/stub-homestudio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: uv run pytest -q
 
   image:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: gateway
+    needs: [gateway, stub]
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homestudio-mcp-config
+  namespace: pdl
+  labels:
+    app: homestudio-mcp
+    app.kubernetes.io/part-of: private-data-layer
+data:
+  # Home Studio server on Pi3 (outside the cluster).
+  HOMESTUDIO_API_URL: http://192.168.0.103:8765
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homestudio-mcp
+  namespace: pdl
+  labels:
+    app: homestudio-mcp
+    app.kubernetes.io/part-of: private-data-layer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: homestudio-mcp
+  template:
+    metadata:
+      labels:
+        app: homestudio-mcp
+        app.kubernetes.io/part-of: private-data-layer
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: homestudio-mcp
+          image: ghcr.io/jamilcpu/homestudio-mcp:latest
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: HOMESTUDIO_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: homestudio-mcp-config
+                  key: HOMESTUDIO_API_URL
+            - name: HOMESTUDIO_MCP_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-secrets
+                  key: HOMESTUDIO_MCP_SECRET
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]

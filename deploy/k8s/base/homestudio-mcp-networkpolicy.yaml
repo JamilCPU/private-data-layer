@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: homestudio-mcp-from-gateway
+  namespace: pdl
+  labels:
+    app: homestudio-mcp
+    app.kubernetes.io/part-of: private-data-layer
+spec:
+  podSelector:
+    matchLabels:
+      app: homestudio-mcp
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: pdl
+          podSelector:
+            matchLabels:
+              app: gateway
+      ports:
+        - protocol: TCP
+          port: 8000

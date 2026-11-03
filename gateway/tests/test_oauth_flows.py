@@ -147,16 +147,50 @@ async def test_headless_client_cannot_use_authorize(
     assert exc.value.error == "unauthorized_client"
 
 
-async def test_dcr_cannot_request_scope_outside_interactive_grant(http: httpx.AsyncClient) -> None:
+async def test_dcr_requesting_extra_scopes_is_mapped_down(
+    http: httpx.AsyncClient, provider: GatewayAuthProvider
+) -> None:
+    every_scope = " ".join(ASSISTANT_SCOPES)  # what Claude Code sends: all advertised scopes
+    client = await dcr(http, scope=every_scope)
+    code = await approve_flow(http, client, scope=every_scope)
+    resp = await exchange(http, client, code)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["scope"] == INTERACTIVE
+    access = await provider.load_access_token(body["access_token"])
+    assert access is not None
+    assert access.scopes == INTERACTIVE.split()
+
+
+async def test_dcr_default_scope_client_may_ask_for_any_known_scope(
+    http: httpx.AsyncClient,
+) -> None:
+    client = await dcr(http)  # no scope at registration
+    code = await approve_flow(http, client, scope="bank:read homestudio:read")
+    resp = await exchange(http, client, code)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["scope"] == INTERACTIVE
+
+
+async def test_dcr_unknown_scope_is_refused(http: httpx.AsyncClient) -> None:
     body = {
         "redirect_uris": [REDIRECT],
         "client_name": "Greedy",
         "token_endpoint_auth_method": "none",
-        "scope": "bank:read",
+        "scope": "homestudio:read bank:write",
     }
     resp = await http.post("/register", json=body)
     assert resp.status_code == 400
     assert resp.json()["error"] == "invalid_client_metadata"
+
+
+async def test_protected_resource_metadata_lists_interactive_scopes_only(
+    http: httpx.AsyncClient,
+) -> None:
+    prm = (await http.get("/.well-known/oauth-protected-resource/mcp")).json()
+    assert prm["scopes_supported"] == INTERACTIVE.split()
+    meta = (await http.get("/.well-known/oauth-authorization-server")).json()
+    assert meta["scopes_supported"] == INTERACTIVE.split()
 
 
 async def test_refresh_rotates_and_keeps_session_expiry(

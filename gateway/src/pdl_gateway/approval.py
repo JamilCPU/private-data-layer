@@ -4,11 +4,12 @@ import asyncio
 import logging
 from html import escape
 
+from mcp.server.auth.routes import _body_limited
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
-from starlette.routing import Route
+from starlette.routing import Route, request_response
 
 from pdl_gateway.oauth import ApprovalError, ApprovalView, GatewayAuthProvider
 from pdl_gateway.throttle import AttemptThrottle
@@ -82,6 +83,7 @@ def build_approval_routes(
     """``GET /approve`` renders the form; ``POST /approve`` completes or denies the request.
 
     Passphrase checks are serialised so concurrent guesses cannot overrun the throttle.
+    The POST body is capped with the SDK's limit, as ``/token`` is.
     """
     throttle = throttle if throttle is not None else AttemptThrottle()
     lock = asyncio.Lock()
@@ -117,5 +119,5 @@ def build_approval_routes(
 
     return [
         Route("/approve", show, methods=["GET"]),
-        Route("/approve", submit, methods=["POST"]),
+        Route("/approve", _body_limited(request_response(submit)), methods=["POST"]),
     ]

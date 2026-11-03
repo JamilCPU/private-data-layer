@@ -10,6 +10,11 @@ import yaml
 
 DEFAULT_SECRET_HEADER = "X-Gateway-Secret"
 _GRANT_KINDS = ("headless", "interactive")
+_SCOPE_VERBS = ("read", "audit")  # v1 has no write scopes
+_NOT_UTF8 = (
+    "not UTF-8 text (PowerShell '>' writes UTF-16; "
+    "use Set-Content -Encoding utf8 or run the command in bash)"
+)
 
 
 class ConfigError(ValueError):
@@ -72,6 +77,8 @@ class GatewaySecrets:
 def _read_mapping(path: Path) -> dict[str, Any]:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"{path}: {_NOT_UTF8}") from exc
     except (OSError, yaml.YAMLError) as exc:
         raise ConfigError(f"cannot read {path}: {exc}") from exc
     if not isinstance(raw, dict):
@@ -136,7 +143,16 @@ def _grant(raw: dict[str, Any]) -> GrantConfig:
     )
 
 
+def _check_scope(scope: str) -> None:
+    _, sep, verb = scope.rpartition(":")
+    if not sep or verb not in _SCOPE_VERBS:
+        allowed = " or ".join(f"<name>:{v}" for v in _SCOPE_VERBS)
+        raise ConfigError(f"scope {scope!r} is not allowed: v1 scopes are {allowed}")
+
+
 def _validate(cfg: GatewayConfig) -> None:
+    for scope in cfg.scopes:
+        _check_scope(scope)
     declared = set(cfg.scopes)
     names = [b.name for b in cfg.backends]
     for name in sorted({n for n in names if names.count(n) > 1}):

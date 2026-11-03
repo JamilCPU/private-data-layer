@@ -112,3 +112,55 @@ async def test_code_exchange_is_refused_once_the_code_is_gone(
     with pytest.raises(TokenError) as exc:
         await provider.exchange_authorization_code(info, code)
     assert exc.value.error == "invalid_grant"
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "http://localhost:6274/callback",
+        "http://127.0.0.1:33418/",
+        "http://[::1]:8080/oauth/cb",
+        "http://localhost/callback",
+    ],
+)
+async def test_dcr_accepts_loopback_redirect_uris(http: httpx.AsyncClient, uri: str) -> None:
+    client = await dcr(http, redirect_uris=[uri])
+    assert client["redirect_uris"] == [uri]
+
+
+@pytest.mark.parametrize(
+    "uris",
+    [
+        ["https://evil.example/callback"],
+        ["http://localhost.evil.example/callback"],
+        ["http://localhost:6274/callback", "http://192.168.0.99:6274/callback"],
+        ["myapp://callback"],
+    ],
+)
+async def test_dcr_refuses_non_loopback_redirect_uris(
+    http: httpx.AsyncClient, uris: list[str]
+) -> None:
+    body = {
+        "redirect_uris": uris,
+        "client_name": "Claude Code",
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
+    resp = await http.post("/register", json=body)
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["error"] == "invalid_redirect_uri"
+
+
+@pytest.mark.parametrize(
+    ("size", "status"),
+    [(2 * 1024 * 1024, 400), (5 * 1024 * 1024, 413)],
+    ids=["2MB-field-limit", "5MB-sdk-body-limit"],
+)
+async def test_approve_post_refuses_oversized_body(
+    http: httpx.AsyncClient, size: int, status: int
+) -> None:
+    """Starlette caps one form field at 1 MB; the SDK's limit (4 MB) caps the whole body."""
+    form = {"request": "x", "passphrase": "p" * size, "decision": "approve"}
+    resp = await http.post("/approve", data=form)
+    assert resp.status_code == status

@@ -374,7 +374,8 @@ def test_build_backends_ca_file_needs_https(config: GatewayConfig) -> None:
 
 
 @pytest.mark.parametrize(
-    "url", ["ftp://automations-mcp/mcp", "https:///mcp", "automations-mcp/mcp"]
+    "url",
+    ["ftp://automations-mcp/mcp", "https:///mcp", "automations-mcp/mcp", "https://[::1/mcp"],
 )
 def test_build_backends_rejects_bad_url(config: GatewayConfig, url: str) -> None:
     changed = _with_automations(config, url=url, ca_file=None)

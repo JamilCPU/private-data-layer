@@ -17,6 +17,7 @@ from pdl_gateway.secrets import hash_secret, new_secret
 
 _CLIENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _FILE_MODE = 0o600
+MIN_PASSPHRASE_CHARS = 12
 
 
 def _client_id(value: str) -> str:
@@ -88,5 +89,7 @@ def set_approval_passphrase(
         return _fail("passphrases differ", 1)
     if not first:
         return _fail("passphrase must not be empty", 1)
+    if len(first) < MIN_PASSPHRASE_CHARS:
+        return _fail(f"passphrase must be at least {MIN_PASSPHRASE_CHARS} characters", 1)
     sys.stdout.write(f"approval_passphrase: {hash_secret(first)}\n")
     return 0

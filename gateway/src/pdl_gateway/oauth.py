@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cache
+from urllib.parse import urlsplit
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -18,6 +19,7 @@ from mcp.server.auth.provider import (
     AuthorizationParams,
     AuthorizeError,
     RefreshToken,
+    RegistrationError,
     TokenError,
     construct_redirect_uri,
 )
@@ -30,6 +32,7 @@ from pdl_gateway.store import PendingApproval, TokenStore
 logger = logging.getLogger(__name__)
 
 _TOKEN_BYTES = 32
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 class ApprovalError(Exception):
@@ -44,6 +47,15 @@ class ApprovalView:
     client_name: str
     redirect_uri: str
     scopes: tuple[str, ...]
+
+
+def _is_loopback(uri: object) -> bool:
+    """True for an http(s) URI on localhost, 127.0.0.1 or [::1], any port or path.
+
+    ``uri`` has already been parsed by pydantic (``AnyUrl``), so ``urlsplit`` cannot fail.
+    """
+    parts = urlsplit(str(uri))
+    return parts.scheme in ("http", "https") and parts.hostname in _LOOPBACK_HOSTS
 
 
 @cache
@@ -92,7 +104,14 @@ class GatewayAuthProvider:
         The stored ``scope`` is every configured scope, which is only what the SDK's
         ``/authorize`` check (``client.validate_scope``) accepts; codes and tokens are
         always pinned to ``config.interactive_scopes`` in ``complete_approval``.
+        Only loopback redirect URIs are accepted (Claude Code and MCP Inspector use them).
         """
+        uris = client_info.redirect_uris or []
+        if not uris or not all(_is_loopback(uri) for uri in uris):
+            raise RegistrationError(
+                "invalid_redirect_uri",
+                "redirect_uris must be loopback (localhost, 127.0.0.1 or [::1])",
+            )
         accepted = " ".join(self.config.scopes)
         self._store.save_client(client_info.model_copy(update={"scope": accepted}))
         name = (client_info.client_name or "")[:80]

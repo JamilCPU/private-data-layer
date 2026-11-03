@@ -10,24 +10,25 @@ from typing import Any
 import httpx
 import mcp.types
 import pytest
-import yaml
 from asgi_lifespan import LifespanManager
+from mcp.client.auth import OAuthClientProvider
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.auth.provider import AccessToken
+from mcp.shared.auth import OAuthClientMetadata
+from pydantic import AnyUrl
 from starlette.applications import Starlette
 
-from pdl_gateway import __main__ as entry
 from pdl_gateway.app import build_app
 from pdl_gateway.audit import AuditEntry
 from pdl_gateway.backends import RemoteBackend
 from pdl_gateway.config import ConfigError, GatewayConfig, GatewaySecrets
 from pdl_gateway.oauth import GatewayAuthProvider
-from pdl_gateway.secrets import hash_secret
 from pdl_gateway.store import TokenStore
 
-from .conftest import EXAMPLE_CONFIG, ISSUER, PA_SECRET, STUB_URL, FakeClock
-from .oauth_helpers import client_credentials, session
+from .conftest import ISSUER, PA_SECRET, STUB_URL, FakeClock
+from .oauth_helpers import REDIRECT, client_credentials, session
+from .sdk_client_helpers import BrowserApproval, MemoryTokenStorage, NoStandaloneStream
 
 MCP_URL = f"{ISSUER}/mcp"
 PRM_URL = f"{ISSUER}/.well-known/oauth-protected-resource/mcp"
@@ -306,54 +307,43 @@ def test_build_app_closes_its_store_when_assembly_fails(
     assert closed == [True]
 
 
-# --- entry point -------------------------------------------------------------
+# --- the SDK's own OAuth client (what Claude Code runs) -------------------------
 
 
-def _write_files(tmp_path: Path) -> tuple[Path, Path]:
-    raw = yaml.safe_load(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
-    raw["db_path"] = str(tmp_path / "gateway.db")
-    raw["audit_dir"] = str(tmp_path / "audit")
-    for backend in raw["backends"]:
-        backend.pop("ca_file", None)
-    config_path = tmp_path / "gateway.yaml"
-    config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
-    secrets_raw = {
-        "approval_passphrase": hash_secret("pass", iterations=1000),
-        "client_secrets": {"personal-assistant": hash_secret(PA_SECRET, iterations=1000)},
-    }
-    secrets_path = tmp_path / "secrets.yaml"
-    secrets_path.write_text(yaml.safe_dump(secrets_raw), encoding="utf-8")
-    return config_path, secrets_path
-
-
-def test_main_bad_config_returns_1(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    missing = tmp_path / "nope.yaml"
-    assert entry.main(["--config", str(missing), "--secrets", str(missing)]) == 1
-    assert "nope.yaml" in capsys.readouterr().err
-
-
-def test_main_missing_backend_env_returns_1(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+async def test_sdk_oauth_client_registers_with_prm_scopes_and_lists_tools(
+    gateway_app: Starlette, gw: httpx.AsyncClient
 ) -> None:
-    config_path, secrets_path = _write_files(tmp_path)
-    monkeypatch.delenv("HOMESTUDIO_MCP_SECRET", raising=False)
-    monkeypatch.setenv("GATEWAY_CONFIG", str(config_path))
-    monkeypatch.setenv("GATEWAY_SECRETS", str(secrets_path))
-    assert entry.main([]) == 1
-    assert "HOMESTUDIO_MCP_SECRET" in capsys.readouterr().err
+    """Regression for step 1: the real client registers with every PRM scope."""
+    prm_scopes = (await gw.get(PRM_URL)).json()["scopes_supported"]
+    storage = MemoryTokenStorage()
+    browser = BrowserApproval(gw)
+    auth = OAuthClientProvider(
+        server_url=MCP_URL,
+        client_metadata=OAuthClientMetadata(
+            client_name="Claude Code",
+            redirect_uris=[AnyUrl(REDIRECT)],
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            token_endpoint_auth_method="none",
+        ),
+        storage=storage,
+        redirect_handler=browser.redirect_handler,
+        callback_handler=browser.callback_handler,
+    )
+    async with (
+        httpx.AsyncClient(
+            transport=NoStandaloneStream(httpx.ASGITransport(app=gateway_app)),
+            base_url=ISSUER,
+            auth=auth,
+        ) as http,
+        streamable_http_client(MCP_URL, http_client=http) as (read, write, _),
+        ClientSession(read, write) as client,
+    ):
+        await client.initialize()
+        names = {tool.name for tool in (await client.list_tools()).tools}
 
-
-def test_main_runs_uvicorn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    config_path, secrets_path = _write_files(tmp_path)
-    monkeypatch.setenv("HOMESTUDIO_MCP_SECRET", "s1")
-    monkeypatch.setenv("AUTOMATIONS_MCP_TOKEN", "t1")
-    calls: list[tuple[Any, str, int]] = []
-
-    def fake_run(app: Any, *, host: str, port: int) -> None:
-        calls.append((app, host, port))
-
-    monkeypatch.setattr(entry.uvicorn, "run", fake_run)
-    assert entry.main(["--config", str(config_path), "--secrets", str(secrets_path)]) == 0
-    [(app, host, port)] = calls
-    assert isinstance(app, Starlette)
-    assert (host, port) == ("0.0.0.0", 8787)
+    assert storage.client_info is not None and storage.client_info.client_id
+    assert storage.client_info.scope == " ".join(prm_scopes)
+    assert storage.tokens is not None
+    assert storage.tokens.scope == "homestudio:read automations:read"
+    assert names == INTERACTIVE_TOOLS

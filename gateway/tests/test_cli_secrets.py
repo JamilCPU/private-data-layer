@@ -116,7 +116,7 @@ def test_set_passphrase_empty(capsys):
 
 
 def test_set_passphrase_prints_hash(capsys):
-    getpass_fn, prompts = _answers("pw", "pw")
+    getpass_fn, prompts = _answers("long enough pw", "long enough pw")
 
     assert set_approval_passphrase([], getpass_fn=getpass_fn) == 0
 
@@ -125,5 +125,15 @@ def test_set_passphrase_prints_hash(capsys):
     line = captured.out.strip()
     assert captured.out.count("\n") == 1
     assert line.startswith("approval_passphrase: pbkdf2_sha256$200000$")
-    assert verify_secret("pw", line.removeprefix("approval_passphrase: "))
+    assert verify_secret("long enough pw", line.removeprefix("approval_passphrase: "))
     assert "pw" not in captured.err
+
+
+def test_set_passphrase_too_short(capsys):
+    getpass_fn, _ = _answers("eleven char", "eleven char")
+
+    assert set_approval_passphrase([], getpass_fn=getpass_fn) == 1
+
+    captured = capsys.readouterr()
+    assert "passphrase must be at least 12 characters" in captured.err
+    assert captured.out == ""

@@ -199,11 +199,16 @@ def _auth_headers(backend: BackendConfig, env: Mapping[str, str]) -> dict[str, s
 
 
 def _check_url(backend: BackendConfig) -> None:
-    parts = urlsplit(backend.url)
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        raise ConfigError(
-            f"backend {backend.name!r}: url must be http(s)://host/..., got {backend.url!r}"
-        )
+    bad = ConfigError(
+        f"backend {backend.name!r}: url must be http(s)://host/..., got {backend.url!r}"
+    )
+    try:
+        parts = urlsplit(backend.url)
+        hostname = parts.hostname
+    except ValueError as exc:  # e.g. an unclosed IPv6 bracket
+        raise bad from exc
+    if parts.scheme not in ("http", "https") or not hostname:
+        raise bad
     if backend.ca_file is not None and parts.scheme != "https":
         raise ConfigError(f"backend {backend.name!r}: ca_file needs an https url")
 

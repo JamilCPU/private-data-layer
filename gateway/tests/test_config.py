@@ -262,3 +262,28 @@ def test_null_or_empty_secret_hashes_rejected(tmp_path: Path, body: str) -> None
     path.write_text(body, encoding="utf-8")
     with pytest.raises(ConfigError, match="non-empty"):
         load_secrets(path)
+
+
+@pytest.mark.parametrize("scope", ["bank:write", "bank", "bank:admin"])
+def test_scopes_other_than_read_or_audit_rejected(tmp_path: Path, scope: str) -> None:
+    def mutate(raw: dict[str, Any]) -> None:
+        raw["scopes"].append(scope)
+
+    with pytest.raises(ConfigError, match=f"scope {scope!r}"):
+        load_config(_write_variant(tmp_path, mutate))
+
+
+def test_utf16_config_is_config_error_naming_the_fix(tmp_path: Path) -> None:
+    path = tmp_path / "g.yaml"
+    path.write_text(EXAMPLE.read_text(encoding="utf-8"), encoding="utf-16")  # PowerShell '>'
+    with pytest.raises(ConfigError, match="not UTF-8 text") as exc:
+        load_config(path)
+    assert "Set-Content -Encoding utf8" in str(exc.value)
+    assert str(path) in str(exc.value)
+
+
+def test_utf16_secrets_is_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "s.yaml"
+    path.write_text(SECRETS_EXAMPLE.read_text(encoding="utf-8"), encoding="utf-16")
+    with pytest.raises(ConfigError, match="not UTF-8 text"):
+        load_secrets(path)

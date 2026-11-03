@@ -61,3 +61,14 @@ def test_main_runs_uvicorn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     [(app, host, port)] = calls
     assert isinstance(app, Starlette)
     assert (host, port) == ("0.0.0.0", 8787)
+
+
+def test_main_utf16_config_returns_1_with_the_fix(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path, secrets_path = _write_files(tmp_path)
+    config_path.write_text(config_path.read_text(encoding="utf-8"), encoding="utf-16")
+    assert entry.main(["--config", str(config_path), "--secrets", str(secrets_path)]) == 1
+    err = capsys.readouterr().err
+    assert "not UTF-8 text" in err
+    assert "Set-Content -Encoding utf8" in err

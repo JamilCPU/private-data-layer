@@ -4,6 +4,7 @@ secrets/
 *.secret
 *.pem
 *.key
+secrets.yaml
 data/
 *.db
 *.db-*

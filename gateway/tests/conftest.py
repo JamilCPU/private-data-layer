@@ -1,13 +1,19 @@
-"""Shared fixtures: config, secrets, store, fake clock, OAuth provider and auth app."""
+"""Shared fixtures: config, secrets, store, fake clock, OAuth provider, auth app, stub backends."""
 
 import dataclasses
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
+from asgi_lifespan import LifespanManager
+from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
+from mcp.shared._httpx_utils import McpHttpClientFactory
 from starlette.applications import Starlette
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from pdl_gateway.auth_app import build_auth_routes
 from pdl_gateway.config import GatewayConfig, GatewaySecrets, load_config
@@ -20,6 +26,7 @@ ISSUER = "http://localhost:8787"
 PASSPHRASE = "open sesame"
 PA_SECRET = "pa-secret"
 _FAST_ITERATIONS = 1000
+STUB_URL = "http://stub/mcp"
 
 
 class FakeClock:
@@ -88,3 +95,96 @@ async def http(auth_app: Starlette) -> AsyncIterator[httpx.AsyncClient]:
         follow_redirects=False,
     ) as client:
         yield client
+
+
+class HeaderRecorder:
+    """ASGI middleware that records the headers of every HTTP request reaching the stub."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self.requests: list[dict[str, str]] = []
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            self.requests.append({k.decode(): v.decode() for k, v in scope["headers"]})
+        await self.app(scope, receive, send)
+
+
+def stub_backend_app(tools: dict[str, Callable[..., Any]], name: str = "stub") -> Starlette:
+    """A stateless JSON-response FastMCP server exposing ``tools``, as a Starlette app."""
+    server = FastMCP(
+        name,
+        stateless_http=True,
+        json_response=True,
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    )
+    for tool_name, fn in tools.items():
+        server.add_tool(fn, name=tool_name)
+    return server.streamable_http_app()
+
+
+def get_taste_profile() -> dict:
+    return {"genres": ["jazz", "ambient"]}
+
+
+def list_queue() -> dict:
+    return {"queue": ["track-1", "track-2"]}
+
+
+def list_devices() -> list:
+    return [{"device": "pi1"}, {"device": "pi2"}]
+
+
+def reboot_device(device: str) -> dict:
+    return {"rebooted": device}
+
+
+def recent_history(limit: int = 20) -> list:
+    return [{"event": "boot"}][:limit]
+
+
+async def _serve(tools: dict[str, Callable[..., Any]], name: str) -> AsyncIterator[HeaderRecorder]:
+    recorder = HeaderRecorder(stub_backend_app(tools, name))
+    async with LifespanManager(recorder):
+        yield recorder
+
+
+@pytest.fixture
+async def homestudio_stub() -> AsyncIterator[HeaderRecorder]:
+    tools = {"get_taste_profile": get_taste_profile, "list_queue": list_queue}
+    async for app in _serve(tools, "homestudio"):
+        yield app
+
+
+@pytest.fixture
+async def automations_stub() -> AsyncIterator[HeaderRecorder]:
+    tools = {
+        "list_devices": list_devices,
+        "reboot_device": reboot_device,
+        "recent_history": recent_history,
+    }
+    async for app in _serve(tools, "automations"):
+        yield app
+
+
+def _asgi_factory(app: ASGIApp) -> McpHttpClientFactory:
+    def factory(
+        headers: dict[str, str] | None = None,
+        timeout: httpx.Timeout | None = None,
+        auth: httpx.Auth | None = None,
+    ) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://stub",
+            headers=headers,
+            timeout=timeout,
+            auth=auth,
+        )
+
+    return factory
+
+
+@pytest.fixture
+def asgi_factory() -> Callable[[ASGIApp], McpHttpClientFactory]:
+    """``asgi_factory(app)`` returns an MCP client factory that talks to ``app`` in-process."""
+    return _asgi_factory

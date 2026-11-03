@@ -1,6 +1,7 @@
 """Shared fixtures: config, secrets, store, fake clock, OAuth provider, auth app, stub backends."""
 
 import dataclasses
+import json
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
@@ -13,7 +14,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared._httpx_utils import McpHttpClientFactory
 from starlette.applications import Starlette
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from pdl_gateway.auth_app import build_auth_routes
 from pdl_gateway.config import GatewayConfig, GatewaySecrets, load_config
@@ -97,17 +98,30 @@ async def http(auth_app: Starlette) -> AsyncIterator[httpx.AsyncClient]:
         yield client
 
 
-class HeaderRecorder:
-    """ASGI middleware that records the headers of every HTTP request reaching the stub."""
+class RequestRecorder:
+    """ASGI middleware recording each HTTP request's headers and JSON-RPC method."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
         self.requests: list[dict[str, str]] = []
+        self.methods: list[str] = []
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http":
-            self.requests.append({k.decode(): v.decode() for k, v in scope["headers"]})
-        await self.app(scope, receive, send)
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        self.requests.append({k.decode(): v.decode() for k, v in scope["headers"]})
+        chunks: list[bytes] = []
+
+        async def recording_receive() -> Message:
+            message = await receive()
+            if message["type"] == "http.request" and scope["method"] == "POST":
+                chunks.append(message.get("body", b""))
+                if not message.get("more_body", False):
+                    self.methods.append(json.loads(b"".join(chunks))["method"])
+            return message
+
+        await self.app(scope, recording_receive, send)
 
 
 def stub_backend_app(tools: dict[str, Callable[..., Any]], name: str = "stub") -> Starlette:
@@ -143,27 +157,30 @@ def recent_history(limit: int = 20) -> list:
     return [{"event": "boot"}][:limit]
 
 
-async def _serve(tools: dict[str, Callable[..., Any]], name: str) -> AsyncIterator[HeaderRecorder]:
-    recorder = HeaderRecorder(stub_backend_app(tools, name))
+async def serve_stub(
+    tools: dict[str, Callable[..., Any]], name: str
+) -> AsyncIterator[RequestRecorder]:
+    """Run a stub backend with its lifespan, yielding the recording ASGI app."""
+    recorder = RequestRecorder(stub_backend_app(tools, name))
     async with LifespanManager(recorder):
         yield recorder
 
 
 @pytest.fixture
-async def homestudio_stub() -> AsyncIterator[HeaderRecorder]:
+async def homestudio_stub() -> AsyncIterator[RequestRecorder]:
     tools = {"get_taste_profile": get_taste_profile, "list_queue": list_queue}
-    async for app in _serve(tools, "homestudio"):
+    async for app in serve_stub(tools, "homestudio"):
         yield app
 
 
 @pytest.fixture
-async def automations_stub() -> AsyncIterator[HeaderRecorder]:
+async def automations_stub() -> AsyncIterator[RequestRecorder]:
     tools = {
         "list_devices": list_devices,
         "reboot_device": reboot_device,
         "recent_history": recent_history,
     }
-    async for app in _serve(tools, "automations"):
+    async for app in serve_stub(tools, "automations"):
         yield app
 
 

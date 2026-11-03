@@ -13,7 +13,12 @@ Secrets are never committed. `gateway-secret.example.yaml` documents the keys of
    and the container registry exist. The migration session delivers all three.
 2. **TLS.** cert-manager is installed with the ClusterIssuer `lab-ca`
    (`kubectl get clusterissuer lab-ca`), and the lab CA certificate is installed on Warstation
-   and on the Pixel.
+   and on the Pixel. Claude Code runs on Node, which ignores the Windows certificate store, so
+   on Warstation also set `NODE_EXTRA_CA_CERTS` to the CA file (then restart Claude Code):
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable("NODE_EXTRA_CA_CERTS", "C:\path\to\lab-ca.pem", "User")
+   ```
 3. **DNS.** Add a Pi-hole record `gateway.lab` pointing at the Traefik VIP, or at `jw` if there
    is no VIP.
 4. **Namespace and Secret.** Create the namespace, then the Secret from the helper outputs
@@ -30,7 +35,20 @@ Secrets are never committed. `gateway-secret.example.yaml` documents the keys of
 
    The gateway sends `HOMESTUDIO_MCP_SECRET` to `homestudio-mcp`, which reads the same value as
    `HOMESTUDIO_MCP_SHARED_SECRET`.
-5. **Manifests.** Copy `deploy/k8s/base` into `lab-gitops/apps/private-data-layer/`. In
+
+   `secrets.yaml` holds hashes only, but keep it out of git anyway (`.gitignore` covers it) and
+   delete it once the Secret exists. On Windows, write it with `Set-Content -Encoding utf8` (or
+   from bash), not PowerShell `>`, which writes UTF-16 that the gateway refuses.
+5. **Image pull.** The GHCR images of a private repo are private, so the cluster needs one of:
+   - **Lab registry:** push `pdl-gateway` (and `homestudio-mcp`) to the lab registry and set
+     `images[].newName` in `kustomization.yaml` to the lab registry path.
+   - **Pull secret:** create a GitHub token with only `read:packages`, then
+     ```sh
+     kubectl -n pdl create secret docker-registry ghcr-pull \
+       --docker-server=ghcr.io --docker-username=<github user> --docker-password=<token>
+     ```
+     and uncomment `imagePullSecrets: [{name: ghcr-pull}]` in both Deployments.
+6. **Manifests.** Copy `deploy/k8s/base` into `lab-gitops/apps/private-data-layer/`. In
    `gateway-configmap.yaml`, set the `automations` backend `url` to the Service name the
    migration publishes for the Automations MCP server (the default is
    `https://automations-mcp.pdl.svc:7702/mcp`). The gateway verifies that server against a CA
@@ -40,7 +58,10 @@ Secrets are never committed. `gateway-secret.example.yaml` documents the keys of
    ```sh
    kubectl -n pdl create configmap automations-ca --from-file=automations-ca.pem=./ca.pem
    ```
-6. **Verify.**
+
+   The gateway pod stays `Pending`/`ContainerCreating` until both the `automations-ca` ConfigMap
+   and the `AUTOMATIONS_MCP_TOKEN` key of `gateway-secrets` exist.
+7. **Verify.**
    - `curl -k https://gateway.lab/healthz` returns OK (`-k` until the CA certificate is
      installed on the machine you test from).
    - Add the gateway to Claude Code and approve the request on the approval page:
@@ -57,4 +78,5 @@ Secrets are never committed. `gateway-secret.example.yaml` documents the keys of
 - `kustomization.yaml` has an `images:` block: change `newName` to move to another registry, or
   `newTag` to pin a build.
 - `homestudio-mcp` reaches the Home Studio server on Pi3 at the URL in the
-  `homestudio-mcp-config` ConfigMap.
+  `homestudio-mcp-config` ConfigMap. It uses Pi3's IP (`192.168.0.103`) until Pi-hole appliance
+  names exist; then switch it to `http://homestudio.pi3.lab:8765` (placeholder name).

@@ -7,7 +7,8 @@ metadata:
     app: homestudio-mcp
     app.kubernetes.io/part-of: private-data-layer
 data:
-  # Home Studio server on Pi3 (outside the cluster).
+  # Home Studio server on Pi3 (outside the cluster). Pi3's IP until Pi-hole appliance names
+  # exist; then switch to http://homestudio.pi3.lab:8765 (placeholder name).
   HOMESTUDIO_API_URL: http://192.168.0.103:8765
 ---
 apiVersion: apps/v1
@@ -29,6 +30,10 @@ spec:
         app: homestudio-mcp
         app.kubernetes.io/part-of: private-data-layer
     spec:
+      # GHCR images of a private repo are private. Either push to the lab registry and set
+      # images[].newName in kustomization.yaml, or create the ghcr-pull Secret (README step 5)
+      # and uncomment:
+      # imagePullSecrets: [{name: ghcr-pull}]
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

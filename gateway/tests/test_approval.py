@@ -8,10 +8,10 @@ import httpx
 import pytest
 from starlette.applications import Starlette
 
-from pdl_gateway.approval import ApprovalThrottle
 from pdl_gateway.auth_app import build_auth_routes
 from pdl_gateway.config import GatewayConfig
 from pdl_gateway.oauth import GatewayAuthProvider
+from pdl_gateway.throttle import AttemptThrottle
 
 from .conftest import ISSUER, FakeClock
 from .oauth_helpers import REDIRECT, begin, dcr, decide
@@ -86,7 +86,7 @@ def throttle_clock() -> FakeClock:
 async def throttled(
     config: GatewayConfig, provider: GatewayAuthProvider, throttle_clock: FakeClock
 ) -> AsyncIterator[httpx.AsyncClient]:
-    throttle = ApprovalThrottle(limit=5, window_s=600, clock=throttle_clock)
+    throttle = AttemptThrottle(limit=5, window_s=600, clock=throttle_clock)
     app = Starlette(routes=build_auth_routes(config, provider, throttle=throttle))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ISSUER) as client:
         yield client
@@ -137,7 +137,7 @@ async def test_concurrent_guesses_cannot_overrun_the_throttle(throttled: httpx.A
 
 def test_throttle_counts_only_failures_inside_the_window() -> None:
     clock = FakeClock(0.0)
-    throttle = ApprovalThrottle(limit=3, window_s=100, clock=clock)
+    throttle = AttemptThrottle(limit=3, window_s=100, clock=clock)
     throttle.record_failure()
     throttle.record_failure()
     clock.advance(150)  # both earlier failures have aged out

@@ -2,9 +2,6 @@
 
 import asyncio
 import logging
-import time
-from collections.abc import Callable
-from dataclasses import dataclass
 from html import escape
 
 from starlette.concurrency import run_in_threadpool
@@ -14,6 +11,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from pdl_gateway.oauth import ApprovalError, ApprovalView, GatewayAuthProvider
+from pdl_gateway.throttle import AttemptThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -30,42 +28,6 @@ _STYLE = (
     "body{font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem}"
     ".error{color:#b00020}button{margin-right:.5rem}code{word-break:break-all}"
 )
-
-
-@dataclass(frozen=True)
-class _ThrottleState:
-    failures: tuple[float, ...] = ()
-    locked_until: float = float("-inf")
-
-
-class ApprovalThrottle:
-    """Locks approvals for ``window_s`` after ``limit`` wrong passphrases within ``window_s``.
-
-    Process-wide, never per request id, so new approval requests cannot reset the count.
-    Successful approvals do not lift a lock early.
-    """
-
-    def __init__(
-        self, limit: int = 5, window_s: float = 600.0, clock: Callable[[], float] = time.monotonic
-    ) -> None:
-        self.limit = limit
-        self.window_s = window_s
-        self._clock = clock
-        self._state = _ThrottleState()
-
-    def blocked(self) -> bool:
-        return self._clock() < self._state.locked_until
-
-    def record_failure(self) -> None:
-        now = self._clock()
-        recent = tuple(t for t in self._state.failures if now - t < self.window_s) + (now,)
-        if len(recent) >= self.limit:
-            logger.warning(
-                "approval locked for %ds after %d wrong passphrases", self.window_s, len(recent)
-            )
-            self._state = _ThrottleState((), now + self.window_s)
-        else:
-            self._state = _ThrottleState(recent, self._state.locked_until)
 
 
 def _page(body: str, status_code: int = 200) -> HTMLResponse:
@@ -108,20 +70,20 @@ def _field(form: FormData, name: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _throttled(throttle: ApprovalThrottle) -> HTMLResponse:
+def _throttled(throttle: AttemptThrottle) -> HTMLResponse:
     minutes = round(throttle.window_s / 60)
     message = f"Too many attempts; try again in {minutes} minutes"
     return _page(f"<h1>Approve access</h1><p>{escape(message)}</p>", status_code=429)
 
 
 def build_approval_routes(
-    provider: GatewayAuthProvider, throttle: ApprovalThrottle | None = None
+    provider: GatewayAuthProvider, throttle: AttemptThrottle | None = None
 ) -> list[Route]:
     """``GET /approve`` renders the form; ``POST /approve`` completes or denies the request.
 
     Passphrase checks are serialised so concurrent guesses cannot overrun the throttle.
     """
-    throttle = throttle if throttle is not None else ApprovalThrottle()
+    throttle = throttle if throttle is not None else AttemptThrottle()
     lock = asyncio.Lock()
 
     async def show(request: Request) -> Response:

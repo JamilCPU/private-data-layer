@@ -1,5 +1,6 @@
 """``/token`` endpoint: our ``client_credentials`` grant, everything else via the SDK handler."""
 
+import asyncio
 import base64
 import binascii
 from collections.abc import Awaitable, Callable
@@ -13,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from pdl_gateway.oauth import GatewayAuthProvider
+from pdl_gateway.throttle import AttemptThrottle
 
 _NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 _INVALID_CLIENT = {"error": "invalid_client", "error_description": "unknown client or wrong secret"}
@@ -20,6 +22,12 @@ _INVALID_CLIENT = {"error": "invalid_client", "error_description": "unknown clie
 
 def _invalid_client() -> JSONResponse:
     return JSONResponse(_INVALID_CLIENT, status_code=401, headers=_NO_STORE)
+
+
+def _locked(throttle: AttemptThrottle) -> JSONResponse:
+    body = {"error": "invalid_client", "error_description": "too many failed attempts"}
+    headers = {**_NO_STORE, "Retry-After": str(round(throttle.window_s))}
+    return JSONResponse(body, status_code=429, headers=headers)
 
 
 def _basic_credentials(header: str) -> tuple[str, str] | None:
@@ -42,21 +50,35 @@ def _credentials(form: FormData, authorization: str) -> tuple[str, str] | None:
 
 
 def build_token_endpoint(
-    provider: GatewayAuthProvider, sdk_handler: TokenHandler
+    provider: GatewayAuthProvider, sdk_handler: TokenHandler, throttle: AttemptThrottle
 ) -> Callable[[Request], Awaitable[Response]]:
-    """Return the ``/token`` request handler."""
+    """Return the ``/token`` request handler.
+
+    ``client_credentials`` checks are serialised behind ``throttle`` (as ``/approve`` is),
+    so concurrent guesses cannot overrun the lockout.
+    """
+    lock = asyncio.Lock()
+
+    async def client_credentials(credentials: tuple[str, str]) -> Response:
+        async with lock:
+            if throttle.blocked():
+                return _locked(throttle)
+            try:
+                token = await run_in_threadpool(provider.issue_client_credentials, *credentials)
+            except TokenError:
+                throttle.record_failure()
+                return _invalid_client()
+        return JSONResponse(token.model_dump(exclude_none=True), headers=_NO_STORE)
 
     async def token_endpoint(request: Request) -> Response:
         form = await request.form()  # Starlette caches it, so the SDK can re-read it
         if form.get("grant_type") != "client_credentials":
             return await sdk_handler.handle(request)
+        if throttle.blocked():
+            return _locked(throttle)
         credentials = _credentials(form, request.headers.get("Authorization", ""))
         if credentials is None:
             return _invalid_client()
-        try:
-            token = await run_in_threadpool(provider.issue_client_credentials, *credentials)
-        except TokenError:
-            return _invalid_client()
-        return JSONResponse(token.model_dump(exclude_none=True), headers=_NO_STORE)
+        return await client_credentials(credentials)
 
     return token_endpoint

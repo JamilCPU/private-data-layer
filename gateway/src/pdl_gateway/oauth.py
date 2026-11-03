@@ -98,6 +98,21 @@ class GatewayAuthProvider:
         name = (client_info.client_name or "")[:80]
         logger.info("registered client %s (%r)", client_info.client_id, name)
 
+    def _live_scopes(self, client_id: str, issued: Sequence[str]) -> list[str] | None:
+        """``issued`` cut down to what the client's grant allows now; None if it has none.
+
+        A headless client follows its grant in the config; a DCR client follows the
+        interactive grant. A removed headless grant (or vanished client) kills its tokens.
+        """
+        grant = self._headless_grant(client_id)
+        if grant is not None:
+            current = frozenset(grant.scopes)
+        elif self._store.get_client(client_id) is not None:
+            current = frozenset(self.config.interactive_scopes)
+        else:
+            return None
+        return [scope for scope in issued if scope in current]
+
     def _client_name(self, client_id: str) -> str:
         if self._headless_grant(client_id) is not None:
             return client_id
@@ -226,10 +241,13 @@ class GatewayAuthProvider:
         stored = self._store.load_token("refresh", refresh_token, int(self._clock()))
         if stored is None or stored.client_id != client.client_id:
             return None
+        scopes = self._live_scopes(stored.client_id, stored.scopes)
+        if scopes is None:
+            return None
         return RefreshToken(
             token=refresh_token,
             client_id=stored.client_id,
-            scopes=list(stored.scopes),
+            scopes=scopes,
             expires_at=stored.expires_at,
             resource=self.config.resource_url,
         )
@@ -267,10 +285,13 @@ class GatewayAuthProvider:
         stored = self._store.load_token("access", token, int(self._clock()))
         if stored is None:
             return None
+        scopes = self._live_scopes(stored.client_id, stored.scopes)
+        if scopes is None:
+            return None
         return AccessToken(
             token=token,
             client_id=stored.client_id,
-            scopes=list(stored.scopes),
+            scopes=scopes,
             expires_at=stored.expires_at,
             resource=self.config.resource_url,
             claims={"client_name": self._client_name(stored.client_id)},

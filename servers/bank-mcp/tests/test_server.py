@@ -195,3 +195,22 @@ async def test_healthz_through_middleware(store, today) -> None:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         assert (await c.get("/healthz")).json() == {"ok": True}
         assert (await c.post("/mcp", json={})).status_code == 401
+
+
+async def test_spend_summary_account_grouping_ties_sort_by_shown_name(store, today) -> None:
+    from decimal import Decimal
+
+    from pdl_bank.models import Account, Transaction
+
+    store.upsert_account(Account("zzz", "Alpha", None, "USD"))
+    store.upsert_account(Account("aaa", "Zulu", None, "USD"))
+    store.upsert_transactions(
+        [
+            Transaction("e1", "zzz", date(2026, 10, 9), Decimal(-500), "E", None, "f"),
+            Transaction("e2", "aaa", date(2026, 10, 9), Decimal(-500), "E", None, "f"),
+        ]
+    )
+    out = _value(
+        await _call(store, today, "spend_summary", {"period": "October", "group_by": "account"})
+    )
+    assert [r["key"] for r in out["rows"]][:2] == ["Alpha", "Zulu"]

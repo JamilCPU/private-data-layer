@@ -13,6 +13,9 @@ log = logging.getLogger(__name__)
 # <repo>/servers/bank-mcp/migrations; in the image this is /app/migrations.
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "migrations"
 
+# Serialises concurrent migration runs of this package (distinct from the email package's key).
+_LOCK_KEY = 0x70646C_62616E  # "pdl" + "ban"
+
 
 def _ensure_tracking_table(conn: psycopg.Connection, schema: str) -> None:
     exists = conn.execute("SELECT 1 FROM pg_namespace WHERE nspname = %s", (schema,)).fetchone()
@@ -34,15 +37,23 @@ def _applied(conn: psycopg.Connection, schema: str) -> set[str]:
 def apply_migrations(
     conn: psycopg.Connection, migrations_dir: Path, *, schema: str = "bank"
 ) -> list[str]:
-    """Run each not-yet-applied ``*.sql`` file in its own transaction; return names applied."""
+    """Run each not-yet-applied ``*.sql`` file in its own transaction; return names applied.
+
+    Every transaction takes a transaction-scoped advisory lock and re-reads the ledger, so two
+    concurrent jobs cannot apply the same file twice.
+    """
     applied_now: list[str] = []
     with conn.transaction():
+        conn.execute("SELECT pg_advisory_xact_lock(%s)", (_LOCK_KEY,))
         _ensure_tracking_table(conn, schema)
         done = _applied(conn, schema)
     for path in sorted(Path(migrations_dir).glob("*.sql")):
         if path.name in done:
             continue
         with conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(%s)", (_LOCK_KEY,))
+            if path.name in _applied(conn, schema):
+                continue
             conn.execute(sql.SQL(path.read_text(encoding="utf-8")))  # type: ignore[arg-type]
             conn.execute(
                 sql.SQL("INSERT INTO {}.schema_migrations (name) VALUES (%s)").format(

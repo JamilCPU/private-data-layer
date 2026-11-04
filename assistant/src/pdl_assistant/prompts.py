@@ -59,3 +59,14 @@ def render_section_prompt(section: str, instruction: str, today: date) -> str:
         today=today.isoformat(),
         data_frame=DATA_FRAME_SENTENCE,
     )
+
+
+PHRASE_PROMPT = (
+    "From this taste profile write two short web search phrases for today's news, "
+    "one per line, nothing else.\n{data_frame}"
+)
+
+
+def render_phrase_prompt() -> str:
+    """The system prompt for turning a taste profile into news search phrases."""
+    return PHRASE_PROMPT.format(data_frame=DATA_FRAME_SENTENCE)

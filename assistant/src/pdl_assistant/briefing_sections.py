@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -9,7 +10,7 @@ from typing import Any, Protocol
 
 from .gateway_client import ToolResult, ToolSpec
 from .llm import ChatMessage
-from .prompts import frame_tool_result, render_section_prompt
+from .prompts import frame_tool_result, render_phrase_prompt, render_section_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +31,9 @@ SEARCH_TOOL = "search_web_search"
 NOTHING_NEW = "nothing new"
 REASON_MAX_CHARS = 120
 FALLBACK_PHRASES = ("technology news today", "video game news today")
-PHRASE_INSTRUCTION = (
-    "From this taste profile write two short web search phrases for today's news, "
-    "one per line, nothing else."
-)
+PHRASE_MAX_CHARS = 80
+PHRASE_LIMIT = 2
+_BULLET = re.compile(r"^\s*(?:[-*•]+|\d+[.)])\s*")
 INSTRUCTIONS = {
     "email": "Mention senders and subjects that look like they need a reply or a payment; "
     "skip newsletters.",
@@ -74,12 +74,24 @@ def _reason(exc: BaseException) -> str:
     return (first or type(exc).__name__)[:REASON_MAX_CHARS]
 
 
-def parse_phrases(text: str, limit: int = 2) -> list[str]:
-    """Distinct non-empty lines of ``text``, at most ``limit``."""
+def _clean_phrase(line: str) -> str | None:
+    phrase = _BULLET.sub("", line).strip()
+    lowered = phrase.lower()
+    if not phrase or "://" in phrase or lowered.startswith("www."):
+        return None
+    if any(not ch.isprintable() for ch in phrase):
+        return None
+    return phrase[:PHRASE_MAX_CHARS].strip()
+
+
+def parse_phrases(text: str, limit: int = PHRASE_LIMIT) -> list[str]:
+    """Safe search phrases from model output: no bullets, URLs or control characters."""
     phrases: list[str] = []
+    seen: set[str] = set()
     for line in text.splitlines():
-        phrase = line.strip()
-        if phrase and phrase not in phrases:
+        phrase = _clean_phrase(line)
+        if phrase and phrase.lower() not in seen:
+            seen.add(phrase.lower())
             phrases.append(phrase)
     return phrases[:limit]
 
@@ -102,19 +114,37 @@ class SectionRunner:
         self._news_count = news_count
         self._timeout = tool_timeout_s
 
-    async def run(self, name: str, since: datetime) -> SectionResult:
+    async def tool_names(self) -> frozenset[str] | None:
+        """Names of the gateway's tools, or None when the gateway cannot be asked."""
+        try:
+            return frozenset(spec.name for spec in await self._gateway.list_tools())
+        except Exception as exc:
+            logger.warning("briefing could not list gateway tools: %s", exc, exc_info=True)
+            return None
+
+    async def run(
+        self, name: str, since: datetime, tools: frozenset[str] | None = None
+    ) -> SectionResult:
         title = TITLES.get(name, name.title())
         try:
-            return await self._dispatch(name, since)
+            return await self._dispatch(name, since, tools)
+        except _Unavailable as exc:
+            logger.warning("briefing section %s unavailable: %s", name, exc)
+            return SectionResult(name, f"{title}: unavailable ({_reason(exc)})", False)
         except Exception as exc:
-            logger.warning("briefing section %s unavailable: %s", name, exc, exc_info=True)
+            logger.warning("briefing section %s failed: %s", name, exc, exc_info=True)
             return SectionResult(name, f"{title}: unavailable ({_reason(exc)})", False)
 
-    async def _dispatch(self, name: str, since: datetime) -> SectionResult:
+    async def _dispatch(
+        self, name: str, since: datetime, tools: frozenset[str] | None
+    ) -> SectionResult:
         if name not in TITLES:
             raise _Unavailable("unknown section")
-        tools = {spec.name for spec in await self._gateway.list_tools()}
-        if name == "flags" or (name == "texts" and SMS_TOOL not in tools):
+        if name == "flags":
+            return SectionResult(name, NOT_CONNECTED[name], False)
+        if tools is None:
+            tools = frozenset(spec.name for spec in await self._gateway.list_tools())
+        if name == "texts" and SMS_TOOL not in tools:
             return SectionResult(name, NOT_CONNECTED[name], False)
         if name == "news":
             return await self._news(tools)
@@ -151,14 +181,21 @@ class SectionRunner:
             answer = NOTHING_NEW
         return f"{title}: {answer}"
 
-    async def _news(self, tools: set[str]) -> SectionResult:
+    async def _news(self, tools: frozenset[str]) -> SectionResult:
         if SEARCH_TOOL not in tools:
             raise _Unavailable(f"tool {SEARCH_TOOL} is not available")
         phrases = await self._news_phrases(TASTE_TOOL in tools)
-        hits = []
+        hits: list[str] = []
+        failure: Exception | None = None
         for phrase in phrases:
             args = {"query": phrase, "recency": "day", "limit": 3}
-            hits.append((await self._call(SEARCH_TOOL, args)).text)
+            try:
+                hits.append((await self._call(SEARCH_TOOL, args)).text)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("briefing news search failed: %s", exc)
+                failure = failure or exc
+        if not hits and failure is not None:
+            raise failure
         instruction = INSTRUCTIONS["news"].format(count=self._news_count)
         summary = await self._summarise("news", instruction, SEARCH_TOOL, "\n\n".join(hits))
         return SectionResult("news", summary, True)
@@ -166,6 +203,11 @@ class SectionRunner:
     async def _news_phrases(self, has_taste: bool) -> list[str]:
         if not has_taste:
             return list(FALLBACK_PHRASES)
-        taste = await self._call(TASTE_TOOL, {})
-        answer = await self._ask(PHRASE_INSTRUCTION, frame_tool_result(TASTE_TOOL, taste.text))
+        try:
+            taste = await self._call(TASTE_TOOL, {})
+            data = frame_tool_result(TASTE_TOOL, taste.text)
+            answer = await self._ask(render_phrase_prompt(), data)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("briefing taste step failed, using fixed phrases: %s", exc)
+            return list(FALLBACK_PHRASES)
         return parse_phrases(answer) or list(FALLBACK_PHRASES)

@@ -187,8 +187,14 @@ class MemoryStore:
         return Briefing(**dict(rows[0])) if rows else None
 
     def last_sent_briefing_at(self) -> datetime | None:
-        """The start time of the newest briefing with status ``sent``, if any."""
+        """The start time of the newest briefing with status ``sent``, if any.
+
+        Stored timestamps are timezone-aware UTC ISO strings; a naive value is read as UTC.
+        """
         rows = self._read(
             "SELECT started_at FROM briefings WHERE status = 'sent' ORDER BY id DESC LIMIT 1"
         )
-        return datetime.fromisoformat(rows[0]["started_at"]) if rows else None
+        if not rows:
+            return None
+        started = datetime.fromisoformat(rows[0]["started_at"])
+        return started if started.tzinfo else started.replace(tzinfo=UTC)

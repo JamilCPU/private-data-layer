@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 from pdl_assistant.briefing import BRIEFING_MAX_CHARS, BriefingBuilder
-from pdl_assistant.briefing_sections import SECTIONS, SectionResult
+from pdl_assistant.briefing_sections import SECTIONS, SectionResult, SectionRunner
+from pdl_assistant.gateway_client import ToolResult, ToolSpec
+from pdl_assistant.llm import ChatMessage
 from pdl_assistant.memory import Briefing, MemoryStore
 
 NOW = datetime(2026, 11, 4, 7, 30, tzinfo=UTC)
@@ -21,7 +23,12 @@ class FakeSections:
     texts: dict[str, str] = field(default_factory=dict)
     seen: list[tuple[str, datetime]] = field(default_factory=list)
 
-    async def run(self, name: str, since: datetime) -> SectionResult:
+    async def tool_names(self) -> frozenset[str] | None:
+        return frozenset({"x"})
+
+    async def run(
+        self, name: str, since: datetime, tools: frozenset[str] | None = None
+    ) -> SectionResult:
         self.seen.append((name, since))
         return SectionResult(name, self.texts.get(name, f"{name.title()}: ok"), True)
 
@@ -106,3 +113,51 @@ def test_briefing_round_trip(store: MemoryStore):
 def test_briefing_status_checked(store: MemoryStore):
     with pytest.raises(sqlite3.IntegrityError):
         store.record_briefing("2026-11-03T07:00:00+00:00", "bogus", "", None)
+
+
+@dataclass
+class FakeGateway:
+    results: dict[str, ToolResult | Exception]
+    listed: int = 0
+
+    async def list_tools(self) -> list[ToolSpec]:
+        self.listed += 1
+        return [ToolSpec(name, "", {}) for name in self.results]
+
+    async def call_tool(self, name: str, arguments: dict) -> ToolResult:
+        result = self.results[name]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+@dataclass
+class FakeLlm:
+    replies: list[str]
+
+    async def chat(self, messages, tools) -> ChatMessage:
+        return ChatMessage("assistant", self.replies.pop(0))
+
+
+async def test_whole_briefing_survives_a_failing_section(store: MemoryStore):
+    gateway = FakeGateway(
+        {
+            "email_list_recent": ToolResult("mail", False, None),
+            "bank_search_transactions": RuntimeError("bank offline"),
+            "search_web_search": ToolResult("hit", False, None),
+        }
+    )
+    llm = FakeLlm(["Pay the invoice", "Headline - site.com"])
+    runner = SectionRunner(gateway, llm, today=lambda: TODAY)  # type: ignore[arg-type]
+    text = await _builder(runner, store).build()  # type: ignore[arg-type]
+    blocks = [
+        HEADER,
+        "Email: Pay the invoice",
+        "Texts: not connected yet.",
+        "Bank: unavailable (bank offline)",
+        "News: Headline - site.com",
+        "Flags: no checks configured yet.",
+    ]
+    expected = "\n\n".join(blocks)
+    assert text == expected
+    assert gateway.listed == 1

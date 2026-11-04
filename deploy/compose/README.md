@@ -99,9 +99,14 @@ cp ../../servers/bank-mcp/csv-mappings.example.yaml bank-csv-mappings.dev.yaml
 docker compose --profile jobs run --rm bank-import
 ```
 
+On a Linux Docker host, `./data/bank` must be writable by uid 10001 (the image user), e.g.
+`sudo chown -R 10001:10001 data/bank`; Docker Desktop handles this for you.
+
 For mail, set `EMAIL_IMAP_HOST`/`EMAIL_IMAP_USER` in `.env`, write the app password to
 `./imap.password` (gitignored; `uv run --project ../../servers/email-mcp pdl-email-set-password --out imap.password`),
-and run `docker compose --profile jobs run --rm email-sync`. The `jobs` profile keeps both
+and run `docker compose --profile jobs run --rm email-sync`. `imap.password` must exist as a
+file before any `docker compose --profile jobs up` or `run`; otherwise Docker creates a directory
+of that name in its place and the sync fails. The `jobs` profile keeps both
 one-shot services out of a plain `docker compose up`. The servers are published on
 127.0.0.1:8001 (bank) and 127.0.0.1:8002 (email).
 

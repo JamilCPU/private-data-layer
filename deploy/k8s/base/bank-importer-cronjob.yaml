@@ -28,6 +28,9 @@ spec:
             runAsNonRoot: true
             runAsUser: 10001
             runAsGroup: 10001
+            # fsGroup does not apply to hostPath volumes: the one-time chown from ../README.md is
+            # what makes the files directories writable for uid 10001. It still covers the
+            # Secret and ConfigMap mounts.
             fsGroup: 10001
             seccompProfile: {type: RuntimeDefault}
           containers:

@@ -1,3 +1,4 @@
+import imaplib
 import logging
 from datetime import UTC, date, datetime, timedelta
 from email.message import EmailMessage
@@ -55,8 +56,8 @@ def test_open_sequence():
     assert fake.calls == [
         ("connect", "imap.example.test", 993),
         ("login", "me", "pw"),
-        ("select", "INBOX", True),
-        ("status", "INBOX", "(UIDVALIDITY UIDNEXT)"),
+        ("select", '"INBOX"', True),
+        ("status", '"INBOX"', "(UIDVALIDITY UIDNEXT)"),
     ]
 
 
@@ -152,3 +153,93 @@ def test_close_ignores_errors():
     src.close()
     src.close()
     _source(FakeImap()).close()
+
+
+def test_malformed_encoded_header_does_not_abort():
+    bad = _html_only().replace(b"=?utf-8?q?Caf=C3=A9?=", b"=?utf-8?b?a?=")
+    src = _open(FakeImap(fetch_items=_items((10, bad), (11, _html_only()))))
+    first, second = list(src.fetch_since(10))
+    assert first.uid == 10 and "=?utf-8?b?a?=" in first.subject
+    assert second.subject == "Café"
+
+
+def test_message_whose_parsing_raises_is_skipped(monkeypatch, caplog):
+    src = _open(FakeImap(fetch_items=_items((10, _html_only()), (11, _html_only()))))
+    real = ImapSource._build
+
+    def flaky(self, uid, msg):
+        if uid == 10:
+            raise UnicodeError("boom")
+        return real(self, uid, msg)
+
+    monkeypatch.setattr(ImapSource, "_build", flaky)
+    with caplog.at_level(logging.WARNING):
+        got = list(src.fetch_since(10))
+    assert [m.uid for m in got] == [11]
+    assert "uid=10" in caplog.text
+
+
+def test_overflowing_date_falls_back_to_now(caplog):
+    raw = _html_only(b"Tue, 03 Nov 99999999999 10:00:00 +0000")
+    src = _open(FakeImap(search=b"10", fetch_items=_items((10, raw))))
+    with caplog.at_level(logging.WARNING):
+        (m,) = list(src.fetch_since(10))
+    assert abs(m.sent_at - datetime.now(UTC)) < timedelta(minutes=1)
+
+
+def test_select_no_raises():
+    fake = FakeImap(statuses={"select": ("NO", b"mailbox missing")})
+    with pytest.raises(imaplib.IMAP4.error, match="select.*mailbox missing"):
+        _source(fake).open()
+
+
+def test_login_no_raises():
+    fake = FakeImap(statuses={"login": ("NO", b"bad creds")})
+    with pytest.raises(imaplib.IMAP4.error, match="login"):
+        _source(fake).open()
+
+
+def test_search_no_raises_and_text_not_parsed_as_uids():
+    fake = FakeImap(statuses={"SEARCH": ("NO", b"too many 12 13")})
+    src = _open(fake)
+    with pytest.raises(imaplib.IMAP4.error, match="SEARCH"):
+        list(src.fetch_since(10))
+    with pytest.raises(imaplib.IMAP4.error):
+        src.search_since(date(2026, 1, 5))
+
+
+def test_fetch_no_raises():
+    fake = FakeImap(statuses={"FETCH": ("NO", b"x" * 500)})
+    src = _open(fake)
+    with pytest.raises(imaplib.IMAP4.error, match="FETCH") as exc:
+        list(src.fetch_since(10))
+    assert len(str(exc.value)) < 300
+
+
+def test_mailbox_is_quoted():
+    fake = FakeImap()
+    src = ImapSource("h", "u", "p", mailbox='[Gmail]/"All" \\Mail', connect=fake)
+    src.open()
+    assert ("select", '"[Gmail]/\\"All\\" \\\\Mail"', True) in fake.calls
+    plain = FakeImap()
+    ImapSource("h", "u", "p", mailbox="[Gmail]/All Mail", connect=plain).open()
+    assert ("select", '"[Gmail]/All Mail"', True) in plain.calls
+
+
+@pytest.mark.parametrize("name", ["INBOX\nX", "a\rb", "a\x00b", "a\x7fb"])
+def test_mailbox_with_control_chars_rejected(name):
+    with pytest.raises(ValueError):
+        ImapSource("h", "u", "p", mailbox=name)
+
+
+def test_flags_first_fetch_header():
+    raw = _html_only()
+    header = b"1 (FLAGS (\\Seen) UID 10 RFC822 {%d}" % len(raw)
+    src = _open(FakeImap(search=b"10", fetch_items=[(header, raw), b")"]))
+    (m,) = list(src.fetch_since(10))
+    assert m.uid == 10
+
+
+def test_fetch_before_open_raises():
+    with pytest.raises(RuntimeError, match="open"):
+        list(_source(FakeImap()).fetch_since(1))

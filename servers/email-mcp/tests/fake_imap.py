@@ -12,7 +12,10 @@ class FakeImap:
         status: bytes = b"INBOX (UIDVALIDITY 777 UIDNEXT 12)",
         search: bytes = b"10 11",
         fetch_items: list[Any] | None = None,
+        statuses: dict[str, tuple[str, bytes]] | None = None,
     ) -> None:
+        # Canned (status, text) per command: login/select/status/SEARCH/FETCH.
+        self.statuses = statuses or {}
         self.calls: list[tuple[Any, ...]] = []
         self.status_resp = status
         self.search_resp = search
@@ -25,18 +28,31 @@ class FakeImap:
 
     def login(self, user: str, password: str) -> tuple[str, list[bytes]]:
         self.calls.append(("login", user, password))
+        if "login" in self.statuses:
+            st, text = self.statuses["login"]
+            return st, [text]
         return "OK", [b"ok"]
 
     def select(self, mailbox: str, readonly: bool = False) -> tuple[str, list[bytes]]:
         self.calls.append(("select", mailbox, readonly))
+        if "select" in self.statuses:
+            st, text = self.statuses["select"]
+            return st, [text]
         return "OK", [b"2"]
 
     def status(self, mailbox: str, what: str) -> tuple[str, list[bytes]]:
         self.calls.append(("status", mailbox, what))
+        if "status" in self.statuses:
+            st, text = self.statuses["status"]
+            return st, [text]
         return "OK", [self.status_resp]
 
     def uid(self, command: str, *args: Any) -> tuple[str, list[Any]]:
         self.calls.append(("uid", command, *args))
+        if command in self.statuses:
+            st, text = self.statuses[command]
+            if st != "OK":
+                return st, [text]
         if command == "SEARCH":
             return "OK", [self.search_resp]
         return "OK", list(self.fetch_items)

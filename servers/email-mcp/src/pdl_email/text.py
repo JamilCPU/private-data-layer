@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import email.errors
 import email.message
 from email.header import decode_header, make_header
 from email.utils import getaddresses
-from html import unescape
 from html.parser import HTMLParser
 
 BODY_MAX_CHARS = 16_000
@@ -52,7 +52,7 @@ def html_to_text(html: str) -> str:
     parser = _TextExtractor()
     parser.feed(html)
     parser.close()
-    return _collapse(unescape(parser.text()))
+    return _collapse(parser.text())
 
 
 def snippet(text: str, n: int = 200) -> str:
@@ -105,7 +105,7 @@ def header_text(msg: email.message.Message, name: str) -> str:
     raw = str(value)
     try:
         return str(make_header(decode_header(raw)))
-    except (UnicodeDecodeError, LookupError, ValueError):
+    except (UnicodeError, LookupError, ValueError, email.errors.MessageError):
         return raw
 
 

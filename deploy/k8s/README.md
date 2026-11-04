@@ -96,11 +96,86 @@ the gateway, and talks to an Ollama server for the model. Deploy it after the ga
 The pod stays in `ContainerCreating` until `assistant-secrets`, `assistant-config` and `lab-ca`
 exist.
 
+## Bank and email
+
+`bank-mcp` and `email-mcp` are read-only MCP servers over the `bank` and `email` sources in the
+Lab Data Store (Postgres). Two CronJobs fill it: `bank-importer` (every 15 minutes, reads the
+statement inbox) and `email-sync` (every 10 minutes, reads one IMAP mailbox). The servers
+connect as the read-only roles `bank_reader` / `email_reader`; the jobs as the owners
+`bank_owner` / `email_owner`, which also apply the schema migrations (`*_APPLY_MIGRATIONS=1`).
+Only the `personal-assistant` grant sees these tools; `interactive-default` does not.
+
+1. **Images.** Built on the primary node into the lab registry, like the gateway; the controller
+   pins the sha in `kustomization.yaml` (the manifests ship the placeholder tag `latest`):
+   ```bash
+   for s in bank email; do
+     docker build -t registry.lab:5000/lab/pdl-$s-mcp:<git-sha> servers/$s-mcp/ && docker push registry.lab:5000/lab/pdl-$s-mcp:<git-sha>
+   done
+   ```
+2. **Lab Data Store.** The `lab-data-store` Secret (keys `BANK_OWNER_PASSWORD`,
+   `BANK_READER_PASSWORD`, `EMAIL_OWNER_PASSWORD`, `EMAIL_READER_PASSWORD`) and the Postgres
+   roles are owned by the Lab Data Store app, not by this repository. Register the `bank` and
+   `email` sources in `lab-gitops` `apps/lab-data-store/sources.yaml` so it creates the roles
+   and Secret keys, and wait for it before deploying these workloads.
+3. **Gateway secrets.** Add the two shared secrets to the existing `gateway-secrets` Secret
+   (the servers and the gateway read the same keys), then restart the gateway:
+   ```bash
+   kubectl -n lab patch secret gateway-secrets --type merge -p "{\"stringData\":{\"BANK_MCP_SECRET\":\"$(python -c 'import secrets; print(secrets.token_urlsafe(32))')\",\"EMAIL_MCP_SECRET\":\"$(python -c 'import secrets; print(secrets.token_urlsafe(32))')\"}}"
+   kubectl -n lab rollout restart deploy/gateway
+   ```
+   (A fresh install can instead pass both as `--from-literal` when creating `gateway-secrets`.)
+4. **Bank rules and CSV mappings.** Copy `servers/bank-mcp/rules.example.yaml` and
+   `csv-mappings.example.yaml`, edit them for your accounts and categories, and load them as a
+   ConfigMap (kept out of git because they describe your accounts):
+   ```bash
+   kubectl -n lab create configmap bank-rules --from-file=rules.yaml=rules.yaml --from-file=csv-mappings.yaml=csv-mappings.yaml
+   ```
+   Re-create it (`kubectl ... create ... --dry-run=client -o yaml | kubectl apply -f -`) after
+   editing; the next importer run picks it up.
+5. **Mailbox.** Host and user are a ConfigMap, the app password a Secret written on the primary
+   node so it never travels through chat or git:
+   ```bash
+   kubectl -n lab create configmap email-sync-config --from-literal=EMAIL_IMAP_HOST=<imap-host> --from-literal=EMAIL_IMAP_USER=<mailbox-user>
+   uv run --project servers/email-mcp pdl-email-set-password --out imap.password
+   kubectl -n lab create secret generic email-imap --from-file=imap.password=imap.password
+   shred -u imap.password
+   ```
+6. **Statement inbox.** The importer reads `inbox` and moves handled files to `processed` under
+   the Lab Data Store files directory on the primary node. Like the gateway's data directory, it
+   must belong to uid 10001 because the pod runs non-root and writes there:
+   ```bash
+   sudo mkdir -p /data/lab/lab-data-store/files/bank/{inbox,processed}
+   sudo chown -R 10001:10001 /data/lab/lab-data-store/files/bank
+   ```
+   Drop statements (CSV or OFX) into `inbox` with `scp`; the next run (at most 15 minutes)
+   imports them. A statement that cannot be imported is moved to `inbox/failed/` (the job
+   logs a warning and exits non-zero once); fix the CSV mapping, then move the file back into
+   `inbox`.
+7. **Manifests.** Copy `base/` to `lab-gitops/apps/private-data-layer/`, commit, push.
+   `bank-mcp` and `email-mcp` stay in `CreateContainerConfigError` until `lab-data-store` and
+   the new `gateway-secrets` keys exist (the gateway Deployment also blocks until the
+   `BANK_MCP_SECRET` and `EMAIL_MCP_SECRET` keys are in `gateway-secrets`); the CronJobs until `bank-rules`, `email-sync-config`
+   and `email-imap` exist.
+8. **Watch a job.** Run one now instead of waiting for the schedule and read its log:
+   ```bash
+   kubectl -n lab create job --from=cronjob/bank-importer bank-import-now
+   kubectl -n lab logs -f job/bank-import-now
+   kubectl -n lab create job --from=cronjob/email-sync email-sync-now
+   kubectl -n lab logs -f job/email-sync-now
+   kubectl -n lab delete job bank-import-now email-sync-now
+   ```
+9. **Verify.** List tools through the gateway as the `personal-assistant` client: the seven
+   tools `bank_spend_summary`, `bank_search_transactions`, `bank_list_accounts`,
+   `bank_recurring_charges`, `email_search_email`, `email_get_email` and `email_list_recent`
+   appear. A token for an interactive client (Claude Code via `claude mcp add`) lists none of
+   them, and calling one answers "unknown tool".
+
 ## Notes
 
 - The gateway pod stays in `ContainerCreating` until `gateway-secrets` exists;
-  `homestudio-mcp` until `homestudio-mcp-config` exists too.
-- `homestudio-mcp` is amd64-only today, hence the same node pin as the gateway.
+  `homestudio-mcp` until `homestudio-mcp-config` exists too. Bank and email need more: see
+  "Bank and email".
+- `homestudio-mcp`, `bank-mcp` and `email-mcp` are amd64-only today, hence the same node pin as the gateway.
 - Scopes, grants and backends are in the ConfigMap's `gateway.yaml`; changing a grant takes
   effect for existing tokens on their next use (the gateway narrows live tokens to the current
   grant) but a restart is needed to reload the file.

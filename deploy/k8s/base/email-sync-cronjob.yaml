@@ -1,0 +1,66 @@
+# Pulls new mail from the one configured IMAP mailbox into the Lab Data Store (Postgres) as the
+# owner role `email_owner`, applying the email schema migrations on the way. The mailbox host and
+# user are the out-of-band ConfigMap `email-sync-config`; the app password is the out-of-band
+# Secret `email-imap` (file mount, never an env var). No values are committed here.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: email-sync
+  labels: {app: email-sync}
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels: {app: email-sync}
+        spec:
+          restartPolicy: OnFailure
+          nodeSelector:
+            role: primary-worker   # amd64 image
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: email-sync
+              image: registry.lab/lab/pdl-email-mcp:latest
+              imagePullPolicy: Always
+              command: [pdl-email-sync, --once]
+              envFrom:
+                - configMapRef: {name: email-sync-config}   # EMAIL_IMAP_HOST, EMAIL_IMAP_USER
+              env:
+                - {name: EMAIL_IMAP_PORT, value: "993"}
+                - {name: EMAIL_MAILBOX, value: INBOX}
+                - {name: EMAIL_INITIAL_DAYS, value: "90"}
+                - {name: EMAIL_IMAP_PASSWORD_FILE, value: /etc/pdl/email/imap.password}
+                - {name: EMAIL_STORE, value: postgres}
+                - {name: EMAIL_APPLY_MIGRATIONS, value: "1"}
+                - {name: PGHOST, value: postgres.lab.svc.cluster.local}
+                - {name: PGPORT, value: "5432"}
+                - {name: PGDATABASE, value: lab}
+                - {name: PGUSER, value: email_owner}
+                - name: PGPASSWORD
+                  valueFrom: {secretKeyRef: {name: lab-data-store, key: EMAIL_OWNER_PASSWORD}}
+              resources:
+                requests: {cpu: 20m, memory: 64Mi}
+                limits: {memory: 256Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              volumeMounts:
+                - {name: imap, mountPath: /etc/pdl/email, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: imap
+              secret: {secretName: email-imap, defaultMode: 0440, items: [{key: imap.password, path: imap.password}]}
+            - name: tmp
+              emptyDir: {}

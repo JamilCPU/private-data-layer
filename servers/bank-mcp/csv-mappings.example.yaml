@@ -1,0 +1,20 @@
+# CSV statement mappings: the first mapping whose match_header columns are all present is used.
+# Use amount_col for a single signed column, or debit_col + credit_col for split columns.
+mappings:
+  - name: single-amount
+    match_header: [Date, Description, Amount]
+    date_col: Date
+    date_format: "%Y-%m-%d"
+    description_col: Description
+    amount_col: Amount
+    account_name: Everyday Checking
+    institution: Example Bank
+  - name: debit-credit
+    match_header: [Posting Date, Details, Debit, Credit]
+    date_col: Posting Date
+    date_format: "%m/%d/%Y"
+    description_col: Details
+    debit_col: Debit
+    credit_col: Credit
+    account_name: Savings
+    institution: Example Bank

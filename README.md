@@ -6,8 +6,9 @@ through a small [MCP](https://modelcontextprotocol.io) server, one **gateway** d
 which tools exist, and a local assistant is the first agent on top of it. No personal data,
 inference or credentials leave the owner's machines.
 
-**Status:** step 1 of 6 is complete: the gateway, the Home Studio MCP server and the Automations
-pass-through, with Claude Code as the first authenticated client. The assistant harness is next.
+**Status:** build steps 1-3 of 6 are complete: the gateway with the Home Studio and Automations
+backends (1), the assistant (2), and `bank-mcp` and `email-mcp` (3). Steps 4-6 are planned:
+`search-mcp` with the morning briefing, `sms-mcp`, and the rule-based flagger.
 
 ## Architecture
 
@@ -37,8 +38,16 @@ pass-through, with Claude Code as the first authenticated client. The assistant 
   expose read-only tools, and accept requests only with a secret header the gateway injects.
   `homestudio-mcp` lives in [home-studio-server](https://github.com/JamilCPU/home-studio-server);
   the Automations server is reused unchanged behind an allowlist of its read tools.
-- **Assistant** (`assistant/`, planned): a small harness around a local Ollama model with three
-  entry points: chat, a morning briefing and a rule-based flagger.
+- **Bank and email backends** (`servers/bank-mcp/`, `servers/email-mcp/`): `bank-mcp` imports
+  CSV/OFX statements dropped in an inbox, categorises them with a rules file and answers spend,
+  search and recurring-charge queries; `email-mcp` syncs one IMAP mailbox (certificate verified,
+  read-only) and serves search and read tools. Each has an importer/sync job plus a read-only
+  server, and persists to the lab's central Postgres (the "Lab Data Store") through its own store
+  with SQL migrations, under separate owner and reader roles. Both are covered by tests that run
+  against Postgres in CI.
+- **Assistant** (`assistant/`): a small harness around a local Ollama model, itself an OAuth
+  client of the gateway, so it sees only the tools its grant allows. Chat is built; the morning
+  briefing and the rule-based flagger come in steps 4 and 6.
 
 Design document: [`docs/superpowers/specs/2026-11-02-private-data-layer-design.md`](docs/superpowers/specs/2026-11-02-private-data-layer-design.md).
 Implementation plans and verification notes: [`docs/superpowers/plans/`](docs/superpowers/plans/).
@@ -46,7 +55,8 @@ Implementation plans and verification notes: [`docs/superpowers/plans/`](docs/su
 ## Stack
 
 Python 3.12, [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) 1.x (streamable
-HTTP, OAuth server), Starlette + uvicorn, httpx, SQLite, pytest (≈99 % coverage, TDD), ruff,
+HTTP, OAuth server), Starlette + uvicorn, httpx, SQLite (gateway and assistant state), PostgreSQL
+via psycopg (bank and email data), pytest (≈99 % coverage, TDD), ruff,
 uv, Docker, Kubernetes (k3s + Flux), GitHub Actions publishing images to GHCR.
 
 ## Run it locally
@@ -74,14 +84,16 @@ write them to files, and the example files (`gateway.example.yaml`, `secrets.exa
 | Path | Contents |
 |---|---|
 | `gateway/` | the gateway package, its tests, Dockerfile and example config |
+| `assistant/` | the assistant harness (chat), its tests and Dockerfile |
+| `servers/bank-mcp/` | bank statement importer and read-only MCP server, with Postgres migrations |
+| `servers/email-mcp/` | IMAP sync job and read-only MCP server, with Postgres migrations |
 | `deploy/compose/` | local development stack with a Home Studio API stub |
 | `deploy/k8s/` | Kubernetes manifests and the to-deploy checklist |
+| `scripts/` | helper scripts and the synthetic end-to-end checks (`scripts/e2e/`) |
 | `docs/superpowers/specs/` | the design document |
 | `docs/superpowers/plans/` | implementation plans and verification notes |
-| `scripts/` | pointers to the helper commands |
 
-Later steps add `assistant/`, `servers/{email,sms,bank,search}-mcp/`, `sms-store/` and the
-Android SMS forwarder.
+Later steps add `servers/{search,sms}-mcp/`, `sms-store/` and the Android SMS forwarder.
 
 ## License
 

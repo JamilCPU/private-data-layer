@@ -102,3 +102,12 @@ def test_header_text_decodes_rfc2047():
 def test_parse_addresses_lowercases_and_skips_empty():
     out = parse_addresses('"Ann" <Ann@Example.com>, bob@example.test, ')
     assert out == [("Ann", "ann@example.com"), (None, "bob@example.test")]
+
+
+def test_html_double_escaped_entity_stays_literal():
+    assert html_to_text("<p>&amp;lt;</p>") == "&lt;"
+
+
+def test_header_text_malformed_encoded_word_falls_back():
+    msg = message_from_string("Subject: =?utf-8?b?a?=\n\nbody")
+    assert header_text(msg, "Subject") == "=?utf-8?b?a?="

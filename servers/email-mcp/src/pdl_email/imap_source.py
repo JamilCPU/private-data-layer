@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import email
+import email.errors
 import imaplib
 import logging
 import re
@@ -16,10 +17,32 @@ from pdl_email.text import extract_body, header_text, parse_addresses, snippet
 
 log = logging.getLogger(__name__)
 
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_ERR_TEXT_MAX = 200
+
+
+class ImapError(imaplib.IMAP4.error):
+    """The server answered a command with a non-OK status."""
+
+
+def _check(command: str, response: tuple[Any, Any]) -> list[Any]:
+    """Return the data of an OK response; raise ImapError otherwise."""
+    status, data = response
+    if status != "OK":
+        text = _joined(data or []).decode("utf-8", errors="replace")[:_ERR_TEXT_MAX]
+        raise ImapError(f"IMAP {command} failed ({status}): {text}")
+    return data
+
+
+def _quote(mailbox: str) -> str:
+    """IMAP quoted string: wrap in double quotes, escape backslash and quote."""
+    return '"' + mailbox.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 FETCH_BATCH = 50
 _UIDVALIDITY = re.compile(rb"UIDVALIDITY\s+(\d+)")
 _UIDNEXT = re.compile(rb"UIDNEXT\s+(\d+)")
-_FETCH_UID = re.compile(rb"UID\s+(\d+)")
+_FETCH_UID = re.compile(rb"\bUID\s+(\d+)\b")
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
@@ -27,14 +50,14 @@ def _parse_sent_at(msg: email.message.Message, uid: int) -> datetime:
     raw = msg.get("Date")
     try:
         parsed = parsedate_to_datetime(str(raw)) if raw else None
-    except (TypeError, ValueError, IndexError):
+        if parsed is not None:
+            parsed = parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    except (TypeError, ValueError, IndexError, OverflowError):
         parsed = None
     if parsed is None:
         log.warning("message uid=%s has a missing or invalid Date header", uid)
         return datetime.now(UTC)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
+    return parsed
 
 
 def _joined(data: list[Any]) -> bytes:
@@ -52,6 +75,8 @@ class ImapSource:
         port: int = 993,
         connect: Callable[..., Any] = imaplib.IMAP4_SSL,
     ) -> None:
+        if _CONTROL.search(mailbox):
+            raise ValueError("mailbox name contains control characters")
         self._host = host
         self._user = user
         self._password = password
@@ -63,9 +88,10 @@ class ImapSource:
 
     def open(self) -> tuple[int, int]:
         self._conn = self._connect(self._host, self._port)
-        self._conn.login(self._user, self._password)
-        self._conn.select(self._mailbox, readonly=True)
-        _, data = self._conn.status(self._mailbox, "(UIDVALIDITY UIDNEXT)")
+        _check("login", self._conn.login(self._user, self._password))
+        quoted = _quote(self._mailbox)
+        _check("select", self._conn.select(quoted, readonly=True))
+        data = _check("status", self._conn.status(quoted, "(UIDVALIDITY UIDNEXT)"))
         raw = _joined(data)
         validity, nxt = _UIDVALIDITY.search(raw), _UIDNEXT.search(raw)
         if validity is None or nxt is None:
@@ -74,7 +100,9 @@ class ImapSource:
         return self._uidvalidity, int(nxt.group(1))
 
     def _search_uids(self, criteria: str) -> list[int]:
-        _, data = self._conn.uid("SEARCH", None, criteria)
+        if self._conn is None:
+            raise RuntimeError("open() first")
+        data = _check("SEARCH", self._conn.uid("SEARCH", None, criteria))
         raw = data[0] if data and isinstance(data[0], bytes) else b""
         return sorted(int(tok) for tok in raw.split() if tok.isdigit())
 
@@ -84,7 +112,7 @@ class ImapSource:
         uids = self._search_uids(f"SINCE {stamp}")
         if uids:
             return uids[0]
-        _, data = self._conn.status(self._mailbox, "(UIDNEXT)")
+        data = _check("status", self._conn.status(_quote(self._mailbox), "(UIDNEXT)"))
         match = _UIDNEXT.search(_joined(data))
         if match is None:
             raise RuntimeError("IMAP STATUS response lacked UIDNEXT")
@@ -94,7 +122,10 @@ class ImapSource:
         uids = [u for u in self._search_uids(f"UID {uid_from}:*") if u >= uid_from][:limit]
         for start in range(0, len(uids), FETCH_BATCH):
             batch = uids[start : start + FETCH_BATCH]
-            _, data = self._conn.uid("FETCH", ",".join(str(u) for u in batch), "(RFC822 FLAGS)")
+            data = _check(
+                "FETCH",
+                self._conn.uid("FETCH", ",".join(str(u) for u in batch), "(RFC822 FLAGS)"),
+            )
             parsed: dict[int, Message] = {}
             for item in data:
                 msg = self._parse_item(item)
@@ -116,7 +147,14 @@ class ImapSource:
         uid = int(uid_match.group(1))
         try:
             return self._build(uid, email.message_from_bytes(item[1]))
-        except (ValueError, LookupError, TypeError) as exc:
+        except (
+            ValueError,
+            LookupError,
+            TypeError,
+            OverflowError,
+            email.errors.MessageError,
+            UnicodeError,
+        ) as exc:
             log.warning("skipping unparseable message uid=%s: %s", uid, exc)
             return None
 

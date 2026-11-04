@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from pdl_bank.categorize import Rule, RulesError, categorize
-from pdl_bank.parsers import CsvMapping, ParseError, detect_and_parse
+from pdl_bank.parsers import MAX_FILE_BYTES, CsvMapping, ParseError, detect_and_parse
 from pdl_bank.store import Store
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ class ImportResult:
     status: Status
     new_transactions: int
     reason: str | None = None
+    file_hash: str | None = None
 
 
 def file_sha256(path: Path) -> str:
@@ -54,7 +55,7 @@ def _import_new(
     store.upsert_account(statement.account)
     new = store.upsert_transactions(txs)
     store.record_import(file_hash, path.name, date.today(), new)
-    return ImportResult(path.name, "imported", new, None)
+    return ImportResult(path.name, "imported", new, None, file_hash)
 
 
 def import_file(
@@ -68,26 +69,33 @@ def import_file(
         log.info("skipping %s: not a statement file", path.name)
         return ImportResult(path.name, "skipped", 0, "not a statement file")
     try:
+        size = path.stat().st_size
+        if size > MAX_FILE_BYTES:
+            raise ParseError(f"{path.name}: file too large ({size} > {MAX_FILE_BYTES} bytes)")
         file_hash = file_sha256(path)
         if store.was_imported(file_hash):
-            return ImportResult(path.name, "duplicate", 0, None)
+            log.info("skipping %s: already imported", path.name)
+            return ImportResult(path.name, "duplicate", 0, None, file_hash)
         return _import_new(path, file_hash, store, mappings, rules)
     except (ParseError, OSError, RulesError) as exc:
         log.warning("failed to import %s: %s", path.name, exc)
         return ImportResult(path.name, "error", 0, str(exc))
+    except Exception as exc:  # one bad file must not stop the run
+        log.warning("failed to import %s: %s", path.name, exc, exc_info=True)
+        return ImportResult(path.name, "error", 0, f"{type(exc).__name__}: {exc}")
 
 
-def _destination(processed: Path, path: Path) -> Path:
+def _destination(processed: Path, path: Path, file_hash: str | None) -> Path:
     dest = processed / path.name
     if dest.exists():
-        suffix = file_sha256(path)[:8]
+        suffix = (file_hash or file_sha256(path))[:8]
         dest = processed / f"{path.stem}.{suffix}{path.suffix}"
     return dest
 
 
-def _move_processed(path: Path, processed: Path) -> None:
+def _move_processed(path: Path, processed: Path, file_hash: str | None) -> None:
     try:
-        shutil.move(str(path), str(_destination(processed, path)))
+        shutil.move(str(path), str(_destination(processed, path, file_hash)))
     except OSError as exc:
         log.warning("could not move %s to %s: %s", path.name, processed, exc)
 
@@ -109,5 +117,5 @@ def import_inbox(
         result = import_file(path, store, mappings, rules)
         results.append(result)
         if processed is not None and result.status in ("imported", "duplicate"):
-            _move_processed(path, processed)
+            _move_processed(path, processed, result.file_hash)
     return results

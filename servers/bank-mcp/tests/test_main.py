@@ -1,10 +1,12 @@
 """main(): env validation, store selection and the uvicorn hand-off."""
 
+import psycopg
 import pytest
 
 from pdl_bank import __main__ as entry
 from pdl_bank.memory_store import MemoryStore
 from pdl_bank.middleware import SharedSecretMiddleware
+from pdl_bank.store import StoreConfigError
 
 ENV = ("BANK_MCP_SHARED_SECRET", "BANK_MCP_HOST", "BANK_MCP_PORT", "BANK_STORE")
 
@@ -54,7 +56,7 @@ def test_main_postgres_without_factory_fails(monkeypatch, capsys, runs) -> None:
     monkeypatch.setenv("BANK_MCP_SHARED_SECRET", "s3cret")
 
     def missing():
-        raise ImportError("no store_factory")
+        raise ModuleNotFoundError("no store_factory", name="pdl_bank.store_factory")
 
     monkeypatch.setattr(entry, "_load_store_factory", missing)
     assert entry.main([]) == 1
@@ -74,3 +76,26 @@ def test_main_postgres_uses_factory(monkeypatch, runs) -> None:
     assert entry.main([]) == 0
     assert len(seen) == 1
     assert len(runs) == 1
+
+
+def test_main_rejects_unknown_store_kind(monkeypatch, capsys, runs) -> None:
+    monkeypatch.setenv("BANK_MCP_SHARED_SECRET", "s3cret")
+    monkeypatch.setenv("BANK_STORE", "sqlite")
+    assert entry.main([]) == 1
+    assert "BANK_STORE" in capsys.readouterr().err
+    assert runs == []
+
+
+@pytest.mark.parametrize(
+    "error", [StoreConfigError("PGUSER is required"), psycopg.OperationalError("down")]
+)
+def test_main_postgres_startup_errors_exit_1(monkeypatch, capsys, runs, error) -> None:
+    monkeypatch.setenv("BANK_MCP_SHARED_SECRET", "s3cret")
+
+    def factory(env):
+        raise error
+
+    monkeypatch.setattr(entry, "_load_store_factory", lambda: factory)
+    assert entry.main([]) == 1
+    assert capsys.readouterr().err.startswith("bank-mcp: ")
+    assert runs == []

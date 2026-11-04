@@ -56,7 +56,7 @@ async def test_spend_summary_defaults_and_grouping(store, today) -> None:
     by_account = _value(
         await _call(store, today, "spend_summary", {"period": "2026-10", "group_by": "account"})
     )
-    assert {r["key"] for r in by_account["rows"]} == {"chk", "sav"}
+    assert {r["key"] for r in by_account["rows"]} == {"Everyday", "Savings"}
 
 
 async def test_spend_summary_bad_period_is_tool_error(store, today) -> None:
@@ -139,3 +139,59 @@ async def test_healthz_open(store, today) -> None:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get("/healthz")
     assert resp.json() == {"ok": True}
+
+
+async def test_spend_summary_account_grouping_uses_names(store, today) -> None:
+    out = _value(
+        await _call(store, today, "spend_summary", {"period": "October", "group_by": "account"})
+    )
+    assert [r["key"] for r in out["rows"]] == ["Everyday", "Savings"]
+
+
+async def test_spend_summary_account_grouping_falls_back_to_id(store, today) -> None:
+    from decimal import Decimal
+
+    from pdl_bank.models import Transaction
+
+    store.upsert_transactions(
+        [Transaction("g", "ghost", date(2026, 10, 9), Decimal(-1), "G", None, "f")]
+    )
+    out = _value(
+        await _call(store, today, "spend_summary", {"period": "October", "group_by": "account"})
+    )
+    assert "ghost" in [r["key"] for r in out["rows"]]
+
+
+async def test_tool_descriptions_are_pinned(store, today) -> None:
+    server = build_server(store, today=lambda: today)
+    async with create_connected_server_and_client_session(server) as session:
+        tools = {t.name: t.description for t in (await session.list_tools()).tools}
+    assert tools == {
+        "spend_summary": (
+            "Total spending for a period, grouped by category, month or account. "
+            "Use it for questions like what did I spend on food in October. "
+            "period accepts 2026-10, October, last 30 days, this month, last month."
+        ),
+        "search_transactions": (
+            "Find individual transactions by words in the description or category, date range "
+            "or amount range. Use it to list specific purchases or check whether a payment "
+            "happened."
+        ),
+        "list_accounts": "The bank accounts that statements have been imported for.",
+        "recurring_charges": (
+            "Charges that repeat with a similar amount, such as subscriptions and rent, "
+            "with how often and when they last occurred."
+        ),
+    }
+
+
+async def test_healthz_through_middleware(store, today) -> None:
+    import httpx
+
+    from pdl_bank.middleware import SharedSecretMiddleware
+
+    inner = build_server(store, today=lambda: today).streamable_http_app()
+    app = SharedSecretMiddleware(inner, "s3cret")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        assert (await c.get("/healthz")).json() == {"ok": True}
+        assert (await c.post("/mcp", json={})).status_code == 401

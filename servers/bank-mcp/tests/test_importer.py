@@ -2,13 +2,15 @@ import logging
 import shutil
 from pathlib import Path
 
+import psycopg
 import pytest
 
-from pdl_bank import cli_import
+from pdl_bank import cli_import, importer
 from pdl_bank.categorize import load_rules
-from pdl_bank.importer import ImportResult, import_file, import_inbox
+from pdl_bank.importer import ImportResult, file_sha256, import_file, import_inbox
 from pdl_bank.memory_store import MemoryStore
 from pdl_bank.parsers import load_mappings
+from pdl_bank.store import StoreConfigError
 
 ROOT = Path(__file__).parent.parent
 FIX = Path(__file__).parent / "fixtures"
@@ -31,7 +33,9 @@ def _by_desc(store: MemoryStore) -> dict[str, str | None]:
 def test_import_file_applies_categories(tmp_path: Path) -> None:
     store = MemoryStore()
     result = import_file(_copy("sample.csv", tmp_path), store, MAPPINGS, RULES)
-    assert result == ImportResult("sample.csv", "imported", 4, None)
+    assert result == ImportResult(
+        "sample.csv", "imported", 4, None, file_sha256(tmp_path / "sample.csv")
+    )
     cats = _by_desc(store)
     assert cats["STREAMFLIX MONTHLY"] == "subscriptions"
     assert cats["GREEN GROCER #12"] == "groceries"
@@ -43,7 +47,7 @@ def test_reimport_is_duplicate(tmp_path: Path) -> None:
     store = MemoryStore()
     import_file(_copy("sample.csv", tmp_path), store, MAPPINGS, RULES)
     again = import_file(_copy("sample.csv", tmp_path, "copy.csv"), store, MAPPINGS, RULES)
-    assert again == ImportResult("copy.csv", "duplicate", 0, None)
+    assert (again.file, again.status, again.new_transactions) == ("copy.csv", "duplicate", 0)
 
 
 def test_overlapping_files_do_not_double_count(tmp_path: Path) -> None:
@@ -179,7 +183,7 @@ def test_cli_without_memory_exits_2_when_factory_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     def boom() -> object:
-        raise ImportError("no store_factory")
+        raise ModuleNotFoundError("no store_factory", name="pdl_bank.store_factory")
 
     monkeypatch.setattr(cli_import, "_load_store_factory", boom)
     assert cli_import.main(_cli_args(tmp_path)) == 2
@@ -213,3 +217,116 @@ def test_cli_rejects_nonpositive_interval(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exc:
         cli_import.main(_cli_args(tmp_path, "--memory", "--interval", "0"))
     assert exc.value.code == 2
+
+
+def test_cli_other_missing_module_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom() -> object:
+        raise ModuleNotFoundError("no psycopg", name="psycopg")
+
+    monkeypatch.setattr(cli_import, "_load_store_factory", boom)
+    with pytest.raises(ModuleNotFoundError):
+        cli_import.main(_cli_args(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "error", [StoreConfigError("PGUSER is required"), psycopg.OperationalError("down")]
+)
+def test_cli_store_startup_errors_exit_2(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: Exception,
+) -> None:
+    def factory(env: object) -> object:
+        raise error
+
+    monkeypatch.setattr(cli_import, "_load_store_factory", lambda: factory)
+    assert cli_import.main(_cli_args(tmp_path)) == 2
+    assert str(error) in capsys.readouterr().err
+
+
+def test_cli_prints_results_only_in_memory_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(cli_import, "_load_store_factory", lambda: lambda env: MemoryStore())
+    _copy("sample.csv", tmp_path / "in")
+    with caplog.at_level(logging.INFO):
+        assert cli_import.main(_cli_args(tmp_path / "in")) == 0
+    assert capsys.readouterr().out == ""
+    assert any("sample.csv: imported" in r.message for r in caplog.records)
+
+
+def test_cli_logs_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def interrupt(seconds: int) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_import.time, "sleep", interrupt)
+    with caplog.at_level(logging.INFO):
+        assert cli_import.main(_cli_args(tmp_path, "--memory", "--interval", "5")) == 0
+    assert any("interrupted" in r.message for r in caplog.records)
+
+
+def test_size_check_happens_before_hashing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_hash(path: Path) -> str:
+        raise AssertionError("must not hash an oversized file")
+
+    monkeypatch.setattr(importer, "file_sha256", no_hash)
+    big = tmp_path / "big.csv"
+    with big.open("wb") as fh:
+        fh.seek(20_000_000)
+        fh.write(b"x")
+    res = import_file(big, MemoryStore(), MAPPINGS, RULES)
+    assert res.status == "error" and res.reason and "too large" in res.reason
+
+
+def test_results_carry_file_hash_for_duplicates(tmp_path: Path) -> None:
+    store = MemoryStore()
+    path = _copy("sample.csv", tmp_path)
+    first = import_file(path, store, MAPPINGS, RULES)
+    again = import_file(path, store, MAPPINGS, RULES)
+    assert again.status == "duplicate"
+    assert first.file_hash == again.file_hash == file_sha256(path)
+
+
+def test_collision_suffix_uses_carried_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    (processed / "sample.csv").write_text("old")
+    src = _copy("sample.csv", tmp_path)
+    monkeypatch.setattr(importer, "file_sha256", lambda p: pytest.fail("rehashed"))
+    dest = importer._destination(processed, src, "deadbeefcafe")
+    assert dest.name == "sample.deadbeef.csv"
+
+
+def test_unexpected_store_error_is_isolated(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Flaky(MemoryStore):
+        def upsert_transactions(self, txs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("db exploded")
+
+    inbox = tmp_path / "in"
+    _copy("sample.csv", inbox)
+    with caplog.at_level(logging.WARNING):
+        results = import_inbox(inbox, Flaky(), MAPPINGS, RULES, processed=None)
+    assert results[0].status == "error"
+    assert results[0].reason and "db exploded" in results[0].reason
+    assert any(r.exc_info for r in caplog.records)
+
+
+def test_duplicate_is_logged_at_info(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    store = MemoryStore()
+    path = _copy("sample.csv", tmp_path)
+    import_file(path, store, MAPPINGS, RULES)
+    with caplog.at_level(logging.INFO):
+        import_file(path, store, MAPPINGS, RULES)
+    assert any("already imported" in r.message for r in caplog.records)

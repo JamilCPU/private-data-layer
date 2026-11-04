@@ -10,6 +10,11 @@ from typing import Literal, Protocol
 
 from pdl_bank.models import Account, Transaction
 
+
+class StoreConfigError(Exception):
+    """Raised when the store cannot be configured from the environment."""
+
+
 GroupBy = Literal["category", "month", "account"]
 
 

@@ -41,3 +41,21 @@ def frame_tool_result(name: str, text: str, *, error: bool = False) -> str:
     escaped = _FRAME_CLOSE.sub(r"&lt;\1", text)
     flag = ' error="true"' if error else ""
     return f'<tool_result name="{safe_tool_name(name)}"{flag}>\n{escaped}\n</tool_result>'
+
+
+SECTION_PROMPT = (
+    "Summarise the data below for a morning briefing section titled {section}. "
+    "{instruction} Three short lines at most, plain text, no markdown. "
+    "If the data is empty, answer exactly: nothing new.\n"
+    "Today's date is {today}.\n{data_frame}"
+)
+
+
+def render_section_prompt(section: str, instruction: str, today: date) -> str:
+    """The system prompt for summarising one briefing section."""
+    return SECTION_PROMPT.format(
+        section=section,
+        instruction=instruction,
+        today=today.isoformat(),
+        data_frame=DATA_FRAME_SENTENCE,
+    )

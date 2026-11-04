@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at TEXT NOT NULL,
     revoked INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS briefings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('sent','skipped','failed')),
+    text TEXT NOT NULL,
+    note TEXT
+);
 """
 
 
@@ -50,6 +58,16 @@ class StoredMessage:
     content: str
     tool_name: str | None
     created_at: str
+
+
+@dataclass(frozen=True)
+class Briefing:
+    id: int
+    started_at: str
+    finished_at: str
+    status: str
+    text: str
+    note: str | None
 
 
 def _now() -> str:
@@ -155,3 +173,22 @@ class MemoryStore:
     def session_valid(self, session_id: str) -> bool:
         rows = self._read("SELECT revoked FROM sessions WHERE id = ?", (session_id,))
         return bool(rows) and not rows[0]["revoked"]
+
+    def record_briefing(self, started_at: str, status: str, text: str, note: str | None) -> int:
+        """Store one briefing attempt (``status`` is sent, skipped or failed); return its id."""
+        return self._write(
+            "INSERT INTO briefings (started_at, finished_at, status, text, note)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (started_at, _now(), status, text, note),
+        )
+
+    def last_briefing(self) -> Briefing | None:
+        rows = self._read("SELECT * FROM briefings ORDER BY id DESC LIMIT 1")
+        return Briefing(**dict(rows[0])) if rows else None
+
+    def last_sent_briefing_at(self) -> datetime | None:
+        """The start time of the newest briefing with status ``sent``, if any."""
+        rows = self._read(
+            "SELECT started_at FROM briefings WHERE status = 'sent' ORDER BY id DESC LIMIT 1"
+        )
+        return datetime.fromisoformat(rows[0]["started_at"]) if rows else None

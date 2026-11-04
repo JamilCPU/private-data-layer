@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bank-mcp
+  labels: {app: bank-mcp}
+spec:
+  selector: {app: bank-mcp}
+  ports:
+    - {name: http, port: 8000, targetPort: http}

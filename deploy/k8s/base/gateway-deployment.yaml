@@ -54,6 +54,10 @@ spec:
             # Only the backend credentials become env vars; the Secret's secrets.yaml key is a file.
             - name: HOMESTUDIO_MCP_SECRET
               valueFrom: {secretKeyRef: {name: gateway-secrets, key: HOMESTUDIO_MCP_SECRET}}
+            - name: BANK_MCP_SECRET
+              valueFrom: {secretKeyRef: {name: gateway-secrets, key: BANK_MCP_SECRET}}
+            - name: EMAIL_MCP_SECRET
+              valueFrom: {secretKeyRef: {name: gateway-secrets, key: EMAIL_MCP_SECRET}}
             # pa-mcp runs with hostNetwork on the primary node and its certificate names only that
             # node's address, so the gateway reaches it at https://${NODE_IP}:7702 (expanded by the
             # gateway at startup) with the hub certificate as CA, using pa-mcp's own bearer token.

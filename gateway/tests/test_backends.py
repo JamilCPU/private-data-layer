@@ -275,13 +275,18 @@ def test_no_ca_file_uses_sdk_default_factory() -> None:
 
 
 def _env() -> dict[str, str]:
-    return {"HOMESTUDIO_MCP_SECRET": "hs-secret", "AUTOMATIONS_MCP_TOKEN": "auto-token"}
+    return {
+        "HOMESTUDIO_MCP_SECRET": "hs-secret",
+        "AUTOMATIONS_MCP_TOKEN": "auto-token",
+        "BANK_MCP_SECRET": "bank-secret",
+        "EMAIL_MCP_SECRET": "email-secret",
+    }
 
 
 def _with_automations(config: GatewayConfig, **changes: object) -> GatewayConfig:
-    homestudio, automations = config.backends
+    homestudio, automations, *rest = config.backends
     return dataclasses.replace(
-        config, backends=(homestudio, dataclasses.replace(automations, **changes))
+        config, backends=(homestudio, dataclasses.replace(automations, **changes), *rest)
     )
 
 
@@ -291,8 +296,8 @@ def test_build_backends_headers(config: GatewayConfig, monkeypatch: pytest.Monke
 
     built = build_backends(_with_automations(config, ca_file=certifi.where()), os.environ)
 
-    assert [b.name for b in built] == ["homestudio", "automations"]
-    homestudio, automations = built
+    assert [b.name for b in built] == ["homestudio", "automations", "bank", "email"]
+    homestudio, automations, bank, email = built
     assert isinstance(homestudio, RemoteBackend)
     assert isinstance(automations, RemoteBackend)
     assert dict(homestudio.headers) == {"X-Gateway-Secret": "hs-secret"}
@@ -301,6 +306,9 @@ def test_build_backends_headers(config: GatewayConfig, monkeypatch: pytest.Monke
     assert automations.allow_tools is not None and "recent_history" in automations.allow_tools
     assert automations.ca_file == certifi.where()
     assert (homestudio.scope, automations.scope) == ("homestudio:read", "automations:read")
+    assert dict(bank.headers) == {"X-Gateway-Secret": "bank-secret"}
+    assert dict(email.headers) == {"X-Gateway-Secret": "email-secret"}
+    assert (bank.scope, email.scope) == ("bank:read", "email:read")
 
 
 def test_build_backends_missing_env_is_config_error(

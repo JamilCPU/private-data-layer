@@ -17,10 +17,14 @@ spec:
     spec:
       nodeSelector:
         role: primary-worker
+      # Service-link env vars (GATEWAY_PORT=tcp://...) would clash with the image's own
+      # GATEWAY_PORT; fsGroup makes the Secret/ConfigMap files readable by the gateway's uid.
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
       initContainers:
         # hostPath directories are created root-owned; hand them to the gateway's uid once.

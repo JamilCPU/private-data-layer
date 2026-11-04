@@ -17,6 +17,9 @@ spec:
     spec:
       nodeSelector:
         role: primary-worker   # amd64 image
+      # Without this, Kubernetes injects HOMESTUDIO_MCP_PORT=tcp://<cluster-ip>:8000 from the
+      # Service of the same name, which the server reads as its listen port.
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -31,6 +34,8 @@ spec:
           envFrom:
             - configMapRef: {name: homestudio-mcp-config}
           env:
+            - {name: HOMESTUDIO_MCP_HOST, value: "0.0.0.0"}
+            - {name: HOMESTUDIO_MCP_PORT, value: "8000"}
             - name: HOMESTUDIO_MCP_SHARED_SECRET
               valueFrom: {secretKeyRef: {name: gateway-secrets, key: HOMESTUDIO_MCP_SECRET}}
           readinessProbe:

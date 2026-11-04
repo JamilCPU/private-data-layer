@@ -1,5 +1,6 @@
-# Copy this folder into lab-gitops as apps/private-data-layer/ (Flux applies main).
-# Images are built by CI (GHCR) and mirrored into the lab registry; swap newName/newTag here.
+# Copy of lab-gitops apps/private-data-layer (the deployed version); keep the two in sync.
+# homestudio-mcp is pulled from GHCR by digest; pdl-gateway is built on the primary node into the
+# lab registry until its GHCR package is public. Bump tags/digests here.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: lab
@@ -14,7 +15,7 @@ resources:
   - homestudio-mcp-service.yaml
   - homestudio-mcp-networkpolicy.yaml
 images:
-  - name: registry.lab/jamil/pdl-gateway
-    newTag: latest
-  - name: registry.lab/jamil/homestudio-mcp
-    newTag: latest
+  - name: registry.lab/lab/pdl-gateway
+    newTag: 99f3ef2
+  - name: ghcr.io/jamilcpu/homestudio-mcp
+    digest: sha256:fec0bc38f8462cbb10298c14f48511cc421aa022f0e2a47925b653ffe5d5ee71

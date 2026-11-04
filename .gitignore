@@ -31,3 +31,7 @@ Thumbs.db
 # compose dev secrets
 deploy/compose/secrets.dev.yaml
 deploy/compose/*.secret
+
+# TLS helper output
+lab-tls/
+deploy/k8s/lab-tls/

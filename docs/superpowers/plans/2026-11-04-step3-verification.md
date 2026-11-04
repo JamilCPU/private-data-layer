@@ -42,11 +42,24 @@ Script: `scripts/e2e/step3_check.py` (adapted from the step 1 cluster check).
 `TEST_PG_DSN` is set (CI provides a `postgres:16` service; locally the throwaway database was
 used). Coverage above 97% in both packages with Postgres, above 91% without.
 
-## Cluster
+## Cluster (2026-11-04)
 
-Pending: images built on the primary node, lab-gitops PR, the Lab Data Store registration of the
-`bank` and `email` sources (schemas, roles and the `lab-data-store` Secret), the out-of-band
-objects from `deploy/k8s/README.md`, one importer run and one sync run observed in the job logs.
+Deployed through lab-gitops (`apps/private-data-layer`, PR #12) with images built on the primary
+node (`pdl-bank-mcp` and `pdl-email-mcp` at the merged sha). Out-of-band objects: the two backend
+secrets added to `gateway-secrets`, ConfigMap `bank-rules` from the example YAMLs, and the Lab Data
+Store's schemas, roles, Secret and files area (its own app). Observed:
+
+- `bank-mcp`, `email-mcp` and the restarted `gateway` pods Running; CronJobs `bank-importer` and
+  `email-sync` registered.
+- `bank-importer` run (`kubectl create job --from=cronjob/bank-importer`): migrations applied once
+  as `bank_owner` (`bank.schema_migrations` holds `001_bank.sql`), empty inbox → `imported=0`,
+  job Complete. The email migrations were applied once by a one-off pod as `email_owner` (the sync
+  CronJob waits for the owner's IMAP ConfigMap and Secret).
+- Through `https://gateway.lab` over TLS: the headless client lists 20 tools (Home Studio,
+  Automations, the 7 bank/email tools, audit); `bank_spend_summary`, `bank_list_accounts`,
+  `bank_recurring_charges`, `email_list_recent` and `email_search_email` answer (empty, no errors)
+  from the cluster database; the interactive client lists the 12 Home Studio/Automations tools
+  only, and bank/email calls answer `unknown tool`; the audit log holds every call.
 
 ## Real data
 

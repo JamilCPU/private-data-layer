@@ -16,3 +16,7 @@ model_timeout_s: 120
 tool_timeout_s: 60
 session_ttl_s: 43200
 system_prompt_extra: ""
+# Optional: push notifications (the morning briefing) to a self-hosted ntfy server; unset = log only.
+# ntfy_url: https://ntfy.example
+# ntfy_topic: briefing
+# ntfy_token_file: /run/secrets/ntfy-token

@@ -9,7 +9,9 @@ import httpx
 import pytest
 from itsdangerous import TimestampSigner
 
+from pdl_assistant import auth as auth_module
 from pdl_assistant.auth import (
+    MAX_PENDING_LOGINS,
     GatewayLogin,
     LoginError,
     SessionSigner,
@@ -96,6 +98,20 @@ def test_revoked_session_is_rejected(store: MemoryStore) -> None:
 
 
 # --- bearer_ok -------------------------------------------------------------------------
+
+
+def test_bearer_ok_checks_every_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    real = auth_module.verify_secret
+
+    def spy(secret: str, encoded: str) -> bool:
+        calls.append(encoded)
+        return real(secret, encoded)
+
+    monkeypatch.setattr(auth_module, "verify_secret", spy)
+    hashes = {name: hash_secret(f"tok-{name}", iterations=1) for name in ("a", "b", "c")}
+    assert bearer_ok("Bearer tok-a", hashes)  # the first hash matches
+    assert calls == list(hashes.values())
 
 
 def test_bearer_ok() -> None:
@@ -288,3 +304,42 @@ async def test_finish_without_access_token_or_unreachable_false(store: MemorySto
 async def test_owned_client_is_closed(store: MemoryStore) -> None:
     login = GatewayLogin(GATEWAY_URL, PUBLIC_URL, store)
     await login.aclose()
+    assert login._http.is_closed
+
+
+async def test_injected_client_is_not_closed(store: MemoryStore) -> None:
+    async with httpx.AsyncClient() as http:
+        await _login(store, http).aclose()
+        assert not http.is_closed
+
+
+async def test_pending_logins_are_capped(store: MemoryStore) -> None:
+    async with serve_gateway() as (_, http):
+        login = _login(store, http)
+        await login.ensure_registered()
+        url, oldest = login.start()
+        callback = await _approve(http, url)
+        newer = [login.start()[1] for _ in range(299)]
+        assert len(login._pending) <= MAX_PENDING_LOGINS
+        assert newer[-1] in login._pending
+        assert await login.finish(callback["code"], oldest) is False
+
+
+async def test_finish_uses_client_id_from_start(store: MemoryStore) -> None:
+    async with serve_gateway() as (_, http):
+        login = _login(store, http)
+        await login.ensure_registered()
+        url, state = login.start()
+        callback = await _approve(http, url)
+        store.set_preference("oauth_client_id", "")  # cleared mid-login: finish must not raise
+        assert await login.finish(callback["code"], state) is True
+
+
+async def test_registration_error_body_is_truncated(store: MemoryStore) -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="x" * 1000)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
+        with pytest.raises(LoginError) as info:
+            await _login(store, http).ensure_registered()
+    assert str(info.value).count("x") == 200

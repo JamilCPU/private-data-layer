@@ -9,7 +9,7 @@ import os
 import sys
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +38,7 @@ source_factory: Callable[..., Any] = ImapSource
 class Config:
     host: str
     user: str
-    password: str
+    password: str = field(repr=False)
     mailbox: str
     port: int
     initial_days: int
@@ -66,7 +66,7 @@ def _load_store_factory() -> Callable[[Mapping[str, str]], Store]:
 
 
 def _open_store() -> Store | None:
-    if os.environ.get("EMAIL_STORE") == "memory":
+    if os.environ.get("EMAIL_STORE", "").strip().lower() == "memory":
         return MemoryStore()
     try:
         factory = _load_store_factory()

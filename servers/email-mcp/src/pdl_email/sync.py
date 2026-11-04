@@ -60,6 +60,11 @@ def sync_once(
             fetched += round_count
             if round_count < limit:
                 break
+            if last_uid < start:
+                # Progress guard: a source returning UIDs below the requested start would make
+                # this loop spin forever on the same range. Stop; the next run retries.
+                log.warning("sync %s: source returned no UID >= %d; stopping drain", mailbox, start)
+                break
             start = last_uid + 1  # the source capped this call; drain the rest of the backlog
         if fetched == 0:
             store.set_sync_state(mailbox, SyncState(uidvalidity, last_uid))

@@ -155,3 +155,23 @@ def test_close_runs_when_open_raises():
     with pytest.raises(OSError):
         run(src, MemoryStore())
     assert src.closed == 1
+
+
+class RegressingSource(FakeSource):
+    """Always answers a full round of UIDs below the requested start."""
+
+    def fetch_since(self, uid_from, *, limit=500):
+        self.fetch_calls.append(uid_from)
+        for uid in range(1, limit + 1):
+            yield replace(make(uid), uidvalidity=self.uidvalidity)
+
+
+def test_drain_stops_when_source_makes_no_progress(caplog):
+    store = MemoryStore()
+    store.set_sync_state("INBOX", SyncState(1, 100))
+    src = RegressingSource([])
+    with caplog.at_level(logging.WARNING):
+        result = run(src, store, batch_size=2, fetch_limit=4)
+    assert src.fetch_calls == [101]
+    assert result.fetched == 4
+    assert "no UID" in caplog.text

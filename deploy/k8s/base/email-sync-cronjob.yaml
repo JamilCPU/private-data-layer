@@ -9,6 +9,9 @@ metadata:
   labels: {app: email-sync}
 spec:
   schedule: "*/10 * * * *"
+  # Suspended until the out-of-band ConfigMap `email-sync-config` and Secret `email-imap` exist
+  # (otherwise a pod in CreateContainerConfigError appears every run). Set to false afterwards.
+  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3

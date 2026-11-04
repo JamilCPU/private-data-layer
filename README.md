@@ -6,9 +6,10 @@ through a small [MCP](https://modelcontextprotocol.io) server, one **gateway** d
 which tools exist, and a local assistant is the first agent on top of it. No personal data,
 inference or credentials leave the owner's machines.
 
-**Status:** build steps 1-3 of 6 are complete: the gateway with the Home Studio and Automations
-backends (1), the assistant (2), and `bank-mcp` and `email-mcp` (3). Steps 4-6 are planned:
-`search-mcp` with the morning briefing, `sms-mcp`, and the rule-based flagger.
+**Status:** build steps 1-4 of 6 are complete: the gateway with the Home Studio and Automations
+backends (1), the assistant (2), `bank-mcp` and `email-mcp` (3), and `search-mcp` on SearXNG with
+the morning briefing pushed through ntfy (4). Steps 5-6 are planned: `sms-mcp` and the
+rule-based flagger.
 
 ## Architecture
 
@@ -46,8 +47,9 @@ backends (1), the assistant (2), and `bank-mcp` and `email-mcp` (3). Steps 4-6 a
   with SQL migrations, under separate owner and reader roles. Both are covered by tests that run
   against Postgres in CI.
 - **Assistant** (`assistant/`): a small harness around a local Ollama model, itself an OAuth
-  client of the gateway, so it sees only the tools its grant allows. Chat is built; the morning
-  briefing and the rule-based flagger come in steps 4 and 6.
+  client of the gateway, so it sees only the tools its grant allows. Chat and the morning
+  briefing are built; the rule-based flagger comes in step 6. A Kubernetes CronJob runs the
+  briefing every morning, and it is pushed to the owner's phone through a self-hosted ntfy server.
 
 Design document: [`docs/superpowers/specs/2026-11-02-private-data-layer-design.md`](docs/superpowers/specs/2026-11-02-private-data-layer-design.md).
 Implementation plans and verification notes: [`docs/superpowers/plans/`](docs/superpowers/plans/).
@@ -87,13 +89,14 @@ write them to files, and the example files (`gateway.example.yaml`, `secrets.exa
 | `assistant/` | the assistant harness (chat), its tests and Dockerfile |
 | `servers/bank-mcp/` | bank statement importer and read-only MCP server, with Postgres migrations |
 | `servers/email-mcp/` | IMAP sync job and read-only MCP server, with Postgres migrations |
+| `servers/search-mcp/` | web search MCP server over a cluster-internal SearXNG |
 | `deploy/compose/` | local development stack with a Home Studio API stub |
 | `deploy/k8s/` | Kubernetes manifests and the to-deploy checklist |
 | `scripts/` | helper scripts and the synthetic end-to-end checks (`scripts/e2e/`) |
 | `docs/superpowers/specs/` | the design document |
 | `docs/superpowers/plans/` | implementation plans and verification notes |
 
-Later steps add `servers/{search,sms}-mcp/`, `sms-store/` and the Android SMS forwarder.
+Later steps add `servers/sms-mcp/`, `sms-store/` and the Android SMS forwarder.
 
 ## License
 

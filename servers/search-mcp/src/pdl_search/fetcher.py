@@ -130,7 +130,7 @@ def _next_url(current: str, response: httpx.Response) -> str:
     location = response.headers.get("location")
     if not location:
         raise FetchError(f"HTTP {response.status_code} redirect without Location")
-    return urljoin(current, location)
+    return urljoin(current, location.strip())
 
 
 async def _build_page(
@@ -151,6 +151,51 @@ async def _build_page(
     return Page(url, final_url, title, text, cut, ctype)
 
 
+async def _hop(http: httpx.AsyncClient, url: str, timeout_s: float) -> httpx.Response:
+    """Send one cookie-free GET without following redirects; the body is left unread.
+
+    Cookie-free by construction: the request is built, any Cookie header the client's jar
+    added is deleted, and it is sent with stream=True. Cookies the server sets land in the
+    jar but can never go out again from here.
+    """
+    request = http.build_request(
+        "GET",
+        url,
+        headers={"User-Agent": USER_AGENT, "Accept": ACCEPT},
+        timeout=httpx.Timeout(timeout_s),
+    )
+    request.headers.pop("cookie", None)
+    return await http.send(request, stream=True, follow_redirects=False)
+
+
+async def _follow(
+    url: str,
+    http: httpx.AsyncClient,
+    resolve: Callable[[str], list[str]],
+    *,
+    max_bytes: int,
+    max_chars: int,
+    max_redirects: int,
+    timeout_s: float,
+) -> Page:
+    current = url
+    for _ in range(max_redirects + 1):
+        await asyncio.to_thread(check_url, current, resolve=resolve)
+        response = await _hop(http, current, timeout_s)
+        try:
+            if response.status_code in REDIRECT_STATUSES:
+                current = _next_url(current, response)
+                continue
+            if response.status_code >= 300:
+                raise FetchError(f"HTTP {response.status_code}")
+            return await _build_page(
+                url, current, response, max_bytes=max_bytes, max_chars=max_chars
+            )
+        finally:
+            await response.aclose()
+    raise FetchError("too many redirects")
+
+
 async def fetch_page(
     url: str,
     *,
@@ -159,27 +204,28 @@ async def fetch_page(
     max_bytes: int = 2_000_000,
     max_chars: int = PAGE_MAX_CHARS,
     max_redirects: int = 5,
+    timeout_s: float = 20.0,
 ) -> Page:
-    """Fetch `url`, guarding every hop against SSRF. Raises UrlRefused or FetchError."""
-    headers = {"User-Agent": USER_AGENT, "Accept": ACCEPT}
-    current = url
+    """Fetch `url`, guarding every hop against SSRF.
+
+    `timeout_s` is both the per-request timeout and the single overall deadline for all
+    hops plus the body read. Only UrlRefused or FetchError escape.
+    """
     try:
-        for _ in range(max_redirects + 1):
-            await asyncio.to_thread(check_url, current, resolve=resolve)
-            async with http.stream(
-                "GET", current, headers=headers, follow_redirects=False
-            ) as response:
-                if response.status_code in REDIRECT_STATUSES:
-                    current = _next_url(current, response)
-                    continue
-                if response.status_code >= 300:
-                    raise FetchError(f"HTTP {response.status_code}")
-                return await _build_page(
-                    url, current, response, max_bytes=max_bytes, max_chars=max_chars
-                )
-        raise FetchError("too many redirects")
+        async with asyncio.timeout(timeout_s):
+            return await _follow(
+                url.strip(),
+                http,
+                resolve,
+                max_bytes=max_bytes,
+                max_chars=max_chars,
+                max_redirects=max_redirects,
+                timeout_s=timeout_s,
+            )
+    except TimeoutError as exc:
+        raise FetchError("timed out") from exc
+    except httpx.InvalidURL as exc:
+        raise UrlRefused("invalid url") from exc
     except httpx.HTTPError as exc:
         log.warning("fetch failed: %s", type(exc).__name__)
         raise FetchError(f"request failed: {exc}") from exc
-    finally:
-        http.cookies.clear()  # never carry cookies between fetches

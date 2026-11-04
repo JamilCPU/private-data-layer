@@ -28,11 +28,38 @@ def test_accepts_public_urls(url: str, port: int | None):
         "https://user:pw@example.com/",
         "https://user@example.com/",
         "http://example.com:notaport/",
+        "http://exa\tmple.com/",
+        "http://exa\nmple.com/",
+        "http://example.com/a b",
+        "http://example.com/\x00",
+        "http://example.com/\x7f",
+        "http://example.com/ x",
+        " http://example.com/",
     ],
 )
 def test_refuses_malformed_or_unsafe_urls(url: str):
-    with pytest.raises(UrlRefused):
+    with pytest.raises(UrlRefused, match="invalid url|scheme|host|credentials|malformed"):
         check_url(url, resolve=_public)
+
+
+def test_whitespace_refusal_message():
+    with pytest.raises(UrlRefused, match="invalid url"):
+        check_url("http://exa\tmple.com/", resolve=_public)
+
+
+def test_refuses_site_local_ipv6():
+    with pytest.raises(UrlRefused):
+        check_url("http://[fec0::1]/", resolve=_public)
+    with pytest.raises(UrlRefused, match="non-public"):
+        check_url("https://example.com/", resolve=lambda _h: ["fec0::1"])
+
+
+def test_unicode_error_from_resolver_is_refused():
+    def bad(_host: str) -> list[str]:
+        raise UnicodeError("label too long")
+
+    with pytest.raises(UrlRefused, match="cannot resolve"):
+        check_url("https://example.com/", resolve=bad)
 
 
 @pytest.mark.parametrize(

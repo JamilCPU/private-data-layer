@@ -48,6 +48,7 @@ def _is_public(ip: IpAddress) -> bool:
         or ip.is_multicast
         or ip.is_reserved
         or ip.is_unspecified
+        or getattr(ip, "is_site_local", False)  # fec0::/10, IPv6 only
     ):
         return False
     return ip.is_global
@@ -84,7 +85,7 @@ def _check_name(host: str) -> None:
 def _check_addresses(host: str, resolve: Callable[[str], list[str]]) -> None:
     try:
         addresses = resolve(host)
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:  # UnicodeError: IDNA failures
         raise UrlRefused(f"cannot resolve {host}: {exc}") from exc
     if not addresses:
         raise UrlRefused(f"cannot resolve {host}: no addresses")
@@ -97,6 +98,8 @@ def _check_addresses(host: str, resolve: Callable[[str], list[str]]) -> None:
 
 def check_url(url: str, *, resolve: Callable[[str], list[str]] = resolve_host) -> ParsedTarget:
     """Return the parsed target or raise UrlRefused. Resolves DNS for named hosts."""
+    if any(c.isspace() or not c.isprintable() for c in url):
+        raise UrlRefused("invalid url: whitespace or control characters")
     scheme, host, port, path = _split(url)
     literal = _parse_ip(host)
     if literal is not None:

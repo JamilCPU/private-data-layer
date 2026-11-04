@@ -16,7 +16,7 @@ dependencies = [
 
 [project.scripts]
 pdl-bank-mcp = "pdl_bank.__main__:main"
-pdl-bank-import = "pdl_bank.importer:main"
+pdl-bank-import = "pdl_bank.cli_import:main"
 
 [dependency-groups]
 dev = [

@@ -13,6 +13,16 @@ backends:
     scope: homestudio:read
     secret_header: X-Gateway-Secret
     secret_env: HOMESTUDIO_MCP_SECRET
+  - name: bank
+    url: http://bank-mcp:8000/mcp
+    scope: bank:read
+    secret_header: X-Gateway-Secret
+    secret_env: BANK_MCP_SECRET
+  - name: email
+    url: http://email-mcp:8000/mcp
+    scope: email:read
+    secret_header: X-Gateway-Secret
+    secret_env: EMAIL_MCP_SECRET
   # The automations backend needs the Personal Automations MCP server, which the
   # compose stack does not run. To try it against a real one, uncomment this block,
   # point `url` at it, and then:

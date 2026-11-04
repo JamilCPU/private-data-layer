@@ -1,0 +1,136 @@
+"""SharedSecretMiddleware: gateway header required except on open paths."""
+
+import httpx
+import pytest
+
+from pdl_email.memory_store import MemoryStore
+from pdl_email.middleware import SharedSecretMiddleware
+from pdl_email.server import build_server
+
+SECRET = "gateway-secret"
+
+
+def _app(reached: list[str]) -> SharedSecretMiddleware:
+    async def inner(scope, receive, send) -> None:
+        reached.append(scope.get("path", scope["type"]))
+        if scope["type"] == "http":
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+    return SharedSecretMiddleware(inner, SECRET)
+
+
+async def _request(app, path: str, headers: dict | None = None) -> httpx.Response:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        return await client.post(path, headers=headers or {})
+
+
+async def test_rejects_missing_or_wrong_header() -> None:
+    reached: list[str] = []
+    app = _app(reached)
+    for headers in (
+        None,
+        {"X-Gateway-Secret": "wrong"},
+        {"X-Gateway-Secret": ""},
+        {"Authorization": f"Bearer {SECRET}"},
+    ):
+        resp = await _request(app, "/mcp", headers)
+        assert resp.status_code == 401
+        assert resp.json() == {"error": "unauthorized"}
+    assert reached == []
+
+
+async def test_passes_matching_header_and_open_paths() -> None:
+    reached: list[str] = []
+    app = _app(reached)
+    assert (await _request(app, "/mcp", {"X-Gateway-Secret": SECRET})).status_code == 200
+    assert (await _request(app, "/healthz")).status_code == 200
+    assert reached == ["/mcp", "/healthz"]
+
+
+async def test_websocket_closed_1008() -> None:
+    reached: list[str] = []
+    app = _app(reached)
+    sent: list[dict] = []
+
+    async def send(message) -> None:
+        sent.append(message)
+
+    await app({"type": "websocket", "path": "/mcp", "headers": []}, None, send)
+    await app({"type": "lifespan"}, None, send)
+    assert sent == [{"type": "websocket.close", "code": 1008}]
+    assert reached == ["lifespan"]
+
+
+async def test_real_mcp_endpoint_behind_secret() -> None:
+    inner = build_server(MemoryStore()).streamable_http_app()
+    app = SharedSecretMiddleware(inner, SECRET)
+    initialize = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "gateway", "version": "1"},
+        },
+    }
+    headers = {"Accept": "application/json, text/event-stream"}
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        inner.router.lifespan_context(inner),
+        httpx.AsyncClient(transport=transport, base_url="http://t") as client,
+    ):
+        denied = await client.post("/mcp", json=initialize, headers=headers)
+        allowed = await client.post(
+            "/mcp", json=initialize, headers={**headers, "X-Gateway-Secret": SECRET}
+        )
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert allowed.json()["result"]["serverInfo"]["name"] == "email"
+
+
+def test_empty_secret_rejected() -> None:
+    async def inner(scope, receive, send) -> None:
+        raise AssertionError("unreachable")
+
+    with pytest.raises(ValueError):
+        SharedSecretMiddleware(inner, "")
+
+
+async def _raw_status(app, path: str, headers: list[tuple[bytes, bytes]]) -> int:
+    """Call the ASGI app with an unnormalized path (httpx would resolve dot segments)."""
+    sent: list[dict] = []
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message) -> None:
+        sent.append(message)
+
+    scope = {"type": "http", "method": "GET", "path": path, "headers": headers}
+    await app(scope, receive, send)
+    return sent[0]["status"]
+
+
+async def test_open_paths_match_exactly() -> None:
+    reached: list[str] = []
+    app = _app(reached)
+    for path in ("/healthz/../mcp", "/healthz/", "/HEALTHZ"):
+        assert await _raw_status(app, path, []) == 401, path
+    assert reached == []
+
+
+async def test_mixed_case_header_argument() -> None:
+    reached: list[str] = []
+
+    async def inner(scope, receive, send) -> None:
+        reached.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app = SharedSecretMiddleware(inner, SECRET, header="X-Gateway-Secret")
+    assert (await _request(app, "/mcp", {"x-gateway-secret": SECRET})).status_code == 200
+    assert (await _request(app, "/mcp", {"X-Gateway-Secret": "nope"})).status_code == 401
+    assert reached == ["/mcp"]

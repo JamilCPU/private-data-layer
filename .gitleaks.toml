@@ -1,0 +1,11 @@
+# gitleaks configuration: extend the default rules and allowlist the ephemeral CI database
+# credentials in the workflow (the password is the GitHub run id, generated per run).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ephemeral CI service-container credentials"
+regexes = [
+  '''postgresql://postgres:\$\{\{ github\.run_id \}\}@localhost''',
+  '''POSTGRES_PASSWORD: \$\{\{ github\.run_id \}\}''',
+]

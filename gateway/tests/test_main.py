@@ -51,6 +51,8 @@ def test_main_runs_uvicorn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     config_path, secrets_path = _write_files(tmp_path)
     monkeypatch.setenv("HOMESTUDIO_MCP_SECRET", "s1")
     monkeypatch.setenv("AUTOMATIONS_MCP_TOKEN", "t1")
+    monkeypatch.setenv("BANK_MCP_SECRET", "s2")
+    monkeypatch.setenv("EMAIL_MCP_SECRET", "s3")
     calls: list[tuple[Any, str, int]] = []
 
     def fake_run(app: Any, *, host: str, port: int) -> None:

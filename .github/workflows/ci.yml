@@ -34,6 +34,62 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
+  bank-mcp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: servers/bank-mcp
+    env:
+      # The CI database is an ephemeral service container; its password is the run id, not a secret.
+      TEST_PG_DSN: postgresql://postgres:${{ github.run_id }}@localhost:5432/postgres
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ${{ github.run_id }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  email-mcp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: servers/email-mcp
+    env:
+      # The CI database is an ephemeral service container; its password is the run id, not a secret.
+      TEST_PG_DSN: postgresql://postgres:${{ github.run_id }}@localhost:5432/postgres
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ${{ github.run_id }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
   stub:
     runs-on: ubuntu-latest
     defaults:
@@ -48,7 +104,7 @@ jobs:
   image-check:
     # Build (never push) the images on pull requests so the Dockerfiles are exercised before main.
     if: github.event_name == 'pull_request'
-    needs: [gateway, assistant]
+    needs: [gateway, assistant, bank-mcp, email-mcp]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,10 +118,20 @@ jobs:
           context: assistant
           push: false
           tags: pdl-assistant:pr-${{ github.event.pull_request.number }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/bank-mcp
+          push: false
+          tags: pdl-bank-mcp:pr-${{ github.event.pull_request.number }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/email-mcp
+          push: false
+          tags: pdl-email-mcp:pr-${{ github.event.pull_request.number }}
 
   image:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [gateway, assistant, stub]
+    needs: [gateway, assistant, bank-mcp, email-mcp, stub]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -91,3 +157,17 @@ jobs:
           tags: |
             ghcr.io/jamilcpu/pdl-assistant:latest
             ghcr.io/jamilcpu/pdl-assistant:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/bank-mcp
+          push: true
+          tags: |
+            ghcr.io/jamilcpu/pdl-bank-mcp:latest
+            ghcr.io/jamilcpu/pdl-bank-mcp:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/email-mcp
+          push: true
+          tags: |
+            ghcr.io/jamilcpu/pdl-email-mcp:latest
+            ghcr.io/jamilcpu/pdl-email-mcp:${{ github.sha }}

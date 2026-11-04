@@ -1,0 +1,81 @@
+# Imports bank statements dropped in the inbox directory on the primary node into the Lab Data
+# Store (Postgres) as the owner role `bank_owner`, applying the bank schema migrations on the way.
+# Processed files are moved next to the inbox, so the pod writes there as uid 10001 (see
+# ../README.md for the one-time chown). Rules and CSV mappings are the out-of-band ConfigMap
+# `bank-rules`; nothing personal is committed here.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: bank-importer
+  labels: {app: bank-importer}
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # A statement that fails to import is quarantined under inbox/failed/, so the retry and the
+      # following run succeed; retrying more than twice would not help a transient outage either.
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels: {app: bank-importer}
+        spec:
+          restartPolicy: OnFailure
+          nodeSelector:
+            role: primary-worker   # the inbox lives on this node's data disk
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            # fsGroup does not apply to hostPath volumes: the one-time chown from ../README.md is
+            # what makes the files directories writable for uid 10001. It still covers the
+            # Secret and ConfigMap mounts.
+            fsGroup: 10001
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: bank-importer
+              image: registry.lab/lab/pdl-bank-mcp:latest
+              imagePullPolicy: Always
+              command:
+                - pdl-bank-import
+                - --inbox
+                - /data/bank/inbox
+                - --processed
+                - /data/bank/processed
+                - --rules
+                - /etc/pdl/bank/rules.yaml
+                - --mappings
+                - /etc/pdl/bank/csv-mappings.yaml
+                - --once
+              env:
+                - {name: BANK_STORE, value: postgres}
+                - {name: BANK_APPLY_MIGRATIONS, value: "1"}
+                - {name: PGHOST, value: postgres.lab.svc.cluster.local}
+                - {name: PGPORT, value: "5432"}
+                - {name: PGDATABASE, value: lab}
+                - {name: PGUSER, value: bank_owner}
+                - name: PGPASSWORD
+                  valueFrom: {secretKeyRef: {name: lab-data-store, key: BANK_OWNER_PASSWORD}}
+              resources:
+                requests: {cpu: 20m, memory: 64Mi}
+                limits: {memory: 256Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              volumeMounts:
+                - {name: files, mountPath: /data/bank/inbox, subPath: inbox}
+                - {name: files, mountPath: /data/bank/processed, subPath: processed}
+                - {name: rules, mountPath: /etc/pdl/bank, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: files
+              hostPath: {path: /data/lab/lab-data-store/files/bank, type: DirectoryOrCreate}
+            - name: rules
+              configMap: {name: bank-rules}
+            - name: tmp
+              emptyDir: {}

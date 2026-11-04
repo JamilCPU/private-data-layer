@@ -25,6 +25,16 @@ data:
         bearer_env: AUTOMATIONS_MCP_TOKEN
         ca_file: /etc/pdl/ca/automations-ca.pem
         allow_tools: [list_devices, get_device, list_programs, get_program, get_program_logs, get_usb_power, recent_history]
+      - name: bank
+        url: http://bank-mcp:8000/mcp
+        scope: bank:read
+        secret_header: X-Gateway-Secret
+        secret_env: BANK_MCP_SECRET
+      - name: email
+        url: http://email-mcp:8000/mcp
+        scope: email:read
+        secret_header: X-Gateway-Secret
+        secret_env: EMAIL_MCP_SECRET
     grants:
       - name: personal-assistant
         kind: headless

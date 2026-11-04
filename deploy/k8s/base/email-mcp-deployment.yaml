@@ -1,0 +1,63 @@
+# Read-only MCP server over the email tables in the Lab Data Store (Postgres). Reachable only from
+# the gateway (ClusterIP + NetworkPolicy + shared-secret header). It connects as the read-only
+# role `email_reader`; the password comes from the Lab Data Store Secret `lab-data-store`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-mcp
+  labels: {app: email-mcp}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: email-mcp}
+  template:
+    metadata:
+      labels: {app: email-mcp}
+    spec:
+      nodeSelector:
+        role: primary-worker   # amd64 image
+      # Without this, Kubernetes injects EMAIL_MCP_PORT=tcp://<cluster-ip>:8000 from the
+      # Service of the same name, which the server reads as its listen port.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: email-mcp
+          image: registry.lab/lab/pdl-email-mcp:latest
+          imagePullPolicy: Always
+          ports:
+            - {name: http, containerPort: 8000}
+          env:
+            - {name: EMAIL_MCP_HOST, value: "0.0.0.0"}
+            - {name: EMAIL_MCP_PORT, value: "8000"}
+            - {name: EMAIL_STORE, value: postgres}
+            - {name: PGHOST, value: postgres.lab.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            - {name: PGDATABASE, value: lab}
+            - {name: PGUSER, value: email_reader}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: lab-data-store, key: EMAIL_READER_PASSWORD}}
+            - name: EMAIL_MCP_SHARED_SECRET
+              valueFrom: {secretKeyRef: {name: gateway-secrets, key: EMAIL_MCP_SECRET}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}

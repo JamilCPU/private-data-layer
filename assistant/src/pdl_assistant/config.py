@@ -42,6 +42,9 @@ class AssistantConfig:
     tool_timeout_s: float = 60
     session_ttl_s: int = 43200
     system_prompt_extra: str = ""
+    ntfy_url: str | None = None  # self-hosted ntfy base URL; unset means notifications are logged
+    ntfy_topic: str = "briefing"
+    ntfy_token_file: str | None = None  # file holding an ntfy access token
 
 
 @dataclass(frozen=True)
@@ -118,8 +121,9 @@ def load_config(path: Path | None, env: Mapping[str, str]) -> AssistantConfig:
     values = {n: _cast(n, specs[n].type, v) for n, v in merged.items()}  # type: ignore[arg-type]
     for name in _URL_FIELDS:
         _check_url(name, values[name])
-    if values.get("gateway_public_url") is not None:
-        _check_url("gateway_public_url", values["gateway_public_url"])
+    for name in ("gateway_public_url", "ntfy_url"):
+        if values.get(name) is not None:
+            _check_url(name, values[name])
     _check_bounds(values)
     return AssistantConfig(**values)
 

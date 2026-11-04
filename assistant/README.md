@@ -44,6 +44,9 @@ uv run pdl-assistant --config assistant.example.yaml
 | `model_timeout_s` / `tool_timeout_s` | `120` / `60` | Timeouts |
 | `session_ttl_s` | `43200` | Browser session lifetime |
 | `system_prompt_extra` | `""` | Text appended to the system prompt |
+| `ntfy_url` | unset | Self-hosted ntfy base URL for notifications; unset means they are only logged |
+| `ntfy_topic` | `briefing` | ntfy topic to publish to |
+| `ntfy_token_file` | unset | File holding an ntfy access token (sent as a bearer token) |
 
 The secrets file holds `api_tokens` (name to PBKDF2 hash) and `cookie_secret`.
 

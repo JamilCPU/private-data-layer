@@ -40,8 +40,9 @@ class BriefingBuilder:
         if last is not None and last.status == "skipped":
             blocks.append(SKIPPED_PREFIX)
         blocks.append(briefing_header(self._today()))
+        tools = await self._sections.tool_names()
         for name in SECTIONS:
-            blocks.append((await self._sections.run(name, since)).text)
+            blocks.append((await self._sections.run(name, since, tools)).text)
         return self._cap("\n\n".join(blocks))
 
     def _cap(self, text: str) -> str:

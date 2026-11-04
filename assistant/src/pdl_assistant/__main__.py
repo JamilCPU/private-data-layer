@@ -64,9 +64,14 @@ def _assemble(config: AssistantConfig, secrets: AssistantSecrets, client_secret:
     )
 
     async def close() -> None:
-        for closer in (login.aclose, gateway.aclose, llm.aclose):
-            await closer()
-        memory.close()
+        try:
+            for closer in (login.aclose, gateway.aclose, llm.aclose):
+                try:
+                    await closer()
+                except Exception:  # keep closing the rest
+                    logger.exception("error while closing a client")
+        finally:
+            memory.close()
 
     return build_app(
         config,

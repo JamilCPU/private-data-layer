@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from importlib import resources
+from urllib.parse import urlsplit
 
 from itsdangerous import BadSignature, TimestampSigner
 from starlette.applications import Starlette
@@ -113,6 +114,16 @@ class _Front:
     page: str
 
     @property
+    def origin(self) -> str:
+        parts = urlsplit(self.config.public_url)
+        return f"{parts.scheme}://{parts.netloc}".lower()
+
+    def origin_ok(self, request: Request) -> bool:
+        """A cookie-authenticated POST: an ``Origin`` header, when sent, must be ours."""
+        origin = request.headers.get("origin")
+        return origin is None or origin.rstrip("/").lower() == self.origin
+
+    @property
     def secure(self) -> bool:
         return self.config.public_url.startswith("https")
 
@@ -164,6 +175,8 @@ def _page_routes(front: _Front) -> list[Route]:
         return resp
 
     async def logout(request: Request) -> Response:
+        if not front.origin_ok(request):
+            return PlainTextResponse("cross-origin request refused", 403)
         session_id = front.session(request)
         if session_id is not None:
             front.memory.revoke_session(session_id)
@@ -247,7 +260,9 @@ def build_app(
         routes=[
             Route("/healthz", _healthz, methods=["GET"]),
             *_page_routes(front),
-            *chat_routes(agent, memory, lambda request: front.session(request) is not None),
+            *chat_routes(
+                agent, memory, lambda request: front.session(request) is not None, front.origin_ok
+            ),
             *openai_routes(config, secrets, agent, memory),
         ],
         middleware=[Middleware(SecurityHeaders)],

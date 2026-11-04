@@ -21,6 +21,19 @@ jobs:
       - run: uv run pytest -q
       - run: uv run ruff check .
 
+  assistant:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: assistant
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
   stub:
     runs-on: ubuntu-latest
     defaults:
@@ -33,9 +46,9 @@ jobs:
       - run: uv run pytest -q
 
   image-check:
-    # Build (never push) the gateway image on pull requests so the Dockerfile is exercised before main.
+    # Build (never push) the images on pull requests so the Dockerfiles are exercised before main.
     if: github.event_name == 'pull_request'
-    needs: [gateway]
+    needs: [gateway, assistant]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,10 +57,15 @@ jobs:
           context: gateway
           push: false
           tags: pdl-gateway:pr-${{ github.event.pull_request.number }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: assistant
+          push: false
+          tags: pdl-assistant:pr-${{ github.event.pull_request.number }}
 
   image:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [gateway, stub]
+    needs: [gateway, assistant, stub]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -66,3 +84,10 @@ jobs:
           tags: |
             ghcr.io/jamilcpu/pdl-gateway:latest
             ghcr.io/jamilcpu/pdl-gateway:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: assistant
+          push: true
+          tags: |
+            ghcr.io/jamilcpu/pdl-assistant:latest
+            ghcr.io/jamilcpu/pdl-assistant:${{ github.sha }}

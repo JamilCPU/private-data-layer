@@ -1,0 +1,100 @@
+# Personal assistant: chat UI + OpenAI-compatible API in front of the lab's Ollama, calling lab
+# tools through the MCP gateway. State (SQLite sessions) lives on the primary worker's data disk,
+# so the pod is pinned there with the role label every stateful lab app uses.
+#
+# Out-of-band objects (never committed; see ../README.md "Assistant"): Secret `assistant-secrets`
+# (client.secret, secrets.yaml), ConfigMap `assistant-config` (ASSISTANT_OLLAMA_URL,
+# ASSISTANT_MODEL), ConfigMap `lab-ca` (lab-ca.pem), TLS Secret `assistant-lab-tls`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assistant
+  labels: {app: assistant}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}   # SQLite: never two assistants at once
+  selector:
+    matchLabels: {app: assistant}
+  template:
+    metadata:
+      labels: {app: assistant}
+    spec:
+      nodeSelector:
+        role: primary-worker
+      # Service-link env vars (ASSISTANT_PORT=tcp://...) would clash with the image's own
+      # ASSISTANT_PORT; fsGroup makes the Secret/ConfigMap files readable by the assistant's uid.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # hostPath directories are created root-owned; hand them to the assistant's uid once.
+        - name: own-data
+          image: busybox:1.37
+          command: [sh, -c, "chown -R 10001:10001 /data"]
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            # chown needs CHOWN/FOWNER; DAC_OVERRIDE lets root read files owned by another uid.
+            capabilities: {drop: [ALL], add: [CHOWN, FOWNER, DAC_OVERRIDE]}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      containers:
+        - name: assistant
+          # The tag is a placeholder: the controller pins the built git sha in kustomization.yaml.
+          image: registry.lab/lab/pdl-assistant:latest
+          imagePullPolicy: Always
+          ports:
+            - {name: http, containerPort: 8790}
+          envFrom:
+            # ASSISTANT_OLLAMA_URL and ASSISTANT_MODEL come from here (env below would win over
+            # envFrom, so those two are deliberately not set in this file).
+            - configMapRef: {name: assistant-config}
+          env:
+            # The browser login redirects to the gateway's public URL (its issuer), so the
+            # assistant uses that same URL; it verifies the gateway's lab-CA certificate.
+            - {name: ASSISTANT_GATEWAY_URL, value: "https://gateway.lab"}
+            # Replaces the trust store for all outbound TLS in the pod (only the gateway is TLS).
+            - {name: SSL_CERT_FILE, value: /etc/pdl/ca/lab-ca.pem}
+            - {name: ASSISTANT_PUBLIC_URL, value: "https://assistant.lab"}
+            - {name: ASSISTANT_DB_PATH, value: /data/assistant.db}
+            - {name: ASSISTANT_SECRETS_FILE, value: /etc/pdl/assistant-secrets.yaml}
+            - {name: ASSISTANT_CLIENT_SECRET_FILE, value: /etc/pdl/client.secret}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: secrets, mountPath: /etc/pdl/assistant-secrets.yaml, subPath: secrets.yaml, readOnly: true}
+            - {name: secrets, mountPath: /etc/pdl/client.secret, subPath: client.secret, readOnly: true}
+            - {name: lab-ca, mountPath: /etc/pdl/ca, readOnly: true}
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: assistant-secrets
+            defaultMode: 0440
+            items:
+              - {key: secrets.yaml, path: secrets.yaml}
+              - {key: client.secret, path: client.secret}
+        - name: lab-ca
+          configMap: {name: lab-ca}
+        - name: data
+          hostPath: {path: /data/lab/private-data-layer/assistant, type: DirectoryOrCreate}
+        - name: tmp
+          emptyDir: {}

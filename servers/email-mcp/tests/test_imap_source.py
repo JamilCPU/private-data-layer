@@ -1,10 +1,12 @@
 import imaplib
 import logging
+import ssl
 from datetime import UTC, date, datetime, timedelta
 from email.message import EmailMessage
 
 import pytest
 
+from pdl_email import imap_source
 from pdl_email.imap_source import ImapSource
 
 from .fake_imap import FakeImap
@@ -59,6 +61,28 @@ def test_open_sequence():
         ("select", '"INBOX"', True),
         ("status", '"INBOX"', "(UIDVALIDITY UIDNEXT)"),
     ]
+
+
+def test_open_passes_verifying_tls_context():
+    fake = FakeImap()
+    _open(fake)
+    ctx = fake.connect_kwargs["ssl_context"]
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+def test_default_connect_wraps_imap4_ssl_with_context(monkeypatch):
+    seen = {}
+
+    def fake_ssl(host, port, **kwargs):
+        seen.update(host=host, port=port, **kwargs)
+        return "conn"
+
+    monkeypatch.setattr(imap_source.imaplib, "IMAP4_SSL", fake_ssl)
+    ctx = ssl.create_default_context()
+    assert imap_source._connect_tls("h", 993, ssl_context=ctx) == "conn"
+    assert seen == {"host": "h", "port": 993, "ssl_context": ctx}
 
 
 def test_fetch_since_parses_two_messages():

@@ -21,9 +21,11 @@ class FakeImap:
         self.search_resp = search
         self.fetch_items = fetch_items or []
         self.logout_error: Exception | None = None
+        self.connect_kwargs: dict[str, Any] = {}
 
-    def __call__(self, host: str, port: int) -> FakeImap:
+    def __call__(self, host: str, port: int, **kwargs: Any) -> FakeImap:
         self.calls.append(("connect", host, port))
+        self.connect_kwargs = kwargs
         return self
 
     def login(self, user: str, password: str) -> tuple[str, list[bytes]]:

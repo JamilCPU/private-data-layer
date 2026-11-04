@@ -52,18 +52,6 @@ def test_main_rejects_bad_port(monkeypatch, capsys, runs) -> None:
     assert runs == []
 
 
-def test_main_postgres_without_factory_fails(monkeypatch, capsys, runs) -> None:
-    monkeypatch.setenv("EMAIL_MCP_SHARED_SECRET", "s3cret")
-
-    def missing():
-        raise ModuleNotFoundError("no store_factory", name="pdl_email.store_factory")
-
-    monkeypatch.setattr(entry, "_load_store_factory", missing)
-    assert entry.main([]) == 1
-    assert "EMAIL_STORE=memory" in capsys.readouterr().err
-    assert runs == []
-
-
 def test_main_postgres_uses_factory(monkeypatch, runs) -> None:
     monkeypatch.setenv("EMAIL_MCP_SHARED_SECRET", "s3cret")
     seen: list[object] = []
@@ -72,7 +60,7 @@ def test_main_postgres_uses_factory(monkeypatch, runs) -> None:
         seen.append(env)
         return MemoryStore()
 
-    monkeypatch.setattr(entry, "_load_store_factory", lambda: factory)
+    monkeypatch.setattr(entry, "store_from_env", factory)
     assert entry.main([]) == 0
     assert len(seen) == 1
     assert len(runs) == 1
@@ -86,18 +74,6 @@ def test_main_rejects_invalid_store(monkeypatch, capsys, runs) -> None:
     assert runs == []
 
 
-def test_main_unrelated_missing_module_propagates(monkeypatch, runs) -> None:
-    monkeypatch.setenv("EMAIL_MCP_SHARED_SECRET", "s3cret")
-
-    def broken():
-        raise ModuleNotFoundError("No module named 'psycopg_pool'", name="psycopg_pool")
-
-    monkeypatch.setattr(entry, "_load_store_factory", broken)
-    with pytest.raises(ModuleNotFoundError):
-        entry.main([])
-    assert runs == []
-
-
 @pytest.mark.parametrize(
     "error",
     [StoreConfigError("EMAIL_DB_HOST is required"), psycopg.OperationalError("connection refused")],
@@ -108,7 +84,7 @@ def test_main_store_open_failure_exits_cleanly(monkeypatch, capsys, runs, error)
     def factory(env):
         raise error
 
-    monkeypatch.setattr(entry, "_load_store_factory", lambda: factory)
+    monkeypatch.setattr(entry, "store_from_env", factory)
     assert entry.main([]) == 1
     err = capsys.readouterr().err
     assert err.startswith("email-mcp: ") and str(error) in err

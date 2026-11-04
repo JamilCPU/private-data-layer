@@ -34,7 +34,7 @@ Checks (SDK client, `tools/call` through the gateway):
   `bank_spend_summary` and `email_search_email` → `unknown tool: <name>`.
 - `gateway_audit_search(since=5 min ago)` → 12 entries covering every bank and email call above.
 
-Script: the session scratchpad `e2e-gw/step3_check.py` (adapted from the step 1 cluster check).
+Script: `scripts/e2e/step3_check.py` (adapted from the step 1 cluster check).
 
 ## Unit and integration tests
 

@@ -82,7 +82,7 @@ def test_cli_postgres_path_calls_store_from_env(monkeypatch, tmp_path):
     }.items():
         monkeypatch.setenv(k, v)
     mem, got = MemoryStore(), {}
-    monkeypatch.setattr(store_factory, "store_from_env", lambda e: mem)
+    monkeypatch.setattr(cli_sync, "store_from_env", lambda e: mem)
     monkeypatch.setattr(cli_sync, "source_factory", lambda *a, **k: None)
     monkeypatch.setattr(
         cli_sync, "sync_once", lambda s, st, **k: got.update(st=st) or SyncResult(0, 0, False)

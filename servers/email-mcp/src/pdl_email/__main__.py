@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable, Mapping
 
 import psycopg
 import uvicorn
@@ -13,6 +12,7 @@ from pdl_email.memory_store import MemoryStore
 from pdl_email.middleware import SharedSecretMiddleware
 from pdl_email.server import build_server
 from pdl_email.store import Store, StoreConfigError
+from pdl_email.store_factory import store_from_env
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
@@ -23,12 +23,6 @@ def _error(message: str) -> int:
     return 1
 
 
-def _load_store_factory() -> Callable[[Mapping[str, str]], Store]:
-    from pdl_email.store_factory import store_from_env  # type: ignore[import-not-found]
-
-    return store_from_env  # type: ignore[no-any-return]
-
-
 def _open_store() -> Store | None:
     kind = os.environ.get("EMAIL_STORE", "").strip().lower() or "postgres"
     if kind == "memory":
@@ -37,14 +31,7 @@ def _open_store() -> Store | None:
         _error("EMAIL_STORE must be memory or postgres")
         return None
     try:
-        factory = _load_store_factory()
-    except ModuleNotFoundError as exc:
-        if exc.name != "pdl_email.store_factory":
-            raise
-        _error("Postgres store not available yet; set EMAIL_STORE=memory")
-        return None
-    try:
-        return factory(os.environ)
+        return store_from_env(os.environ)
     except (StoreConfigError, psycopg.Error) as exc:
         _error(str(exc))
         return None

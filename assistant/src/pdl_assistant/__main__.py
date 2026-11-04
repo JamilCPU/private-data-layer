@@ -54,7 +54,9 @@ def _assemble(config: AssistantConfig, secrets: AssistantSecrets, client_secret:
         config.gateway_url, config.client_id, client_secret, tool_timeout_s=config.tool_timeout_s
     )
     llm = OllamaClient(config.ollama_url, config.model, timeout_s=config.model_timeout_s)
-    login = GatewayLogin(config.gateway_url, config.public_url, memory)
+    login = GatewayLogin(
+        config.gateway_url, config.public_url, memory, public_gateway_url=config.gateway_public_url
+    )
     agent = Agent(
         llm,
         gateway,

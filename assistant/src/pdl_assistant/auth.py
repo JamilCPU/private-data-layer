@@ -116,8 +116,12 @@ class GatewayLogin:
         http: httpx.AsyncClient | None = None,
         clock: Callable[[], float] = time.monotonic,
         pending_ttl_s: float = 600,
+        public_gateway_url: str | None = None,
     ) -> None:
         self._gateway = gateway_url.rstrip("/")
+        # Server-to-server calls (register, token) use gateway_url; the browser is sent to
+        # public_gateway_url, which may differ inside a cluster (service name vs ingress host).
+        self._public_gateway = (public_gateway_url or gateway_url).rstrip("/")
         self._redirect_uri = f"{public_url.rstrip('/')}/oauth/callback"
         self._store = store
         self._owns_http = http is None
@@ -187,7 +191,7 @@ class GatewayLogin:
             "state": state,
             "resource": f"{self._gateway}/mcp",
         }
-        return f"{self._gateway}/authorize?{urlencode(params)}", state
+        return f"{self._public_gateway}/authorize?{urlencode(params)}", state
 
     async def finish(self, code: str, state: str) -> bool:
         """Exchange ``code`` for the pending ``state`` (single use); True if a token came back."""

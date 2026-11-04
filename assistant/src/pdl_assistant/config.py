@@ -3,8 +3,8 @@
 from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, fields
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any
+from types import MappingProxyType, UnionType
+from typing import Any, Union, get_args, get_origin
 from urllib.parse import urlparse
 
 import yaml
@@ -33,6 +33,7 @@ class AssistantConfig:
     secrets_file: str
     db_path: str
     public_url: str
+    gateway_public_url: str | None = None  # where browsers find the gateway, if not gateway_url
     client_id: str = "personal-assistant"
     listen_host: str = "0.0.0.0"
     listen_port: int = 8790
@@ -61,8 +62,12 @@ def _read_mapping(path: Path) -> dict[str, Any]:
     return raw
 
 
-def _cast(name: str, kind: type, value: Any) -> Any:
+def _cast(name: str, kind: Any, value: Any) -> Any:
     """Cast ``value`` to the field type; a bad value is a ConfigError naming the field."""
+    if get_origin(kind) in (Union, UnionType):  # Optional[X]: None stays None, else cast to X
+        if value is None:
+            return None
+        kind = next(a for a in get_args(kind) if a is not type(None))
     try:
         if kind is str:
             if isinstance(value, (dict, list)):
@@ -113,6 +118,8 @@ def load_config(path: Path | None, env: Mapping[str, str]) -> AssistantConfig:
     values = {n: _cast(n, specs[n].type, v) for n, v in merged.items()}  # type: ignore[arg-type]
     for name in _URL_FIELDS:
         _check_url(name, values[name])
+    if values.get("gateway_public_url") is not None:
+        _check_url("gateway_public_url", values["gateway_public_url"])
     _check_bounds(values)
     return AssistantConfig(**values)
 

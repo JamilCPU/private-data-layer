@@ -30,6 +30,8 @@ Thumbs.db
 
 # compose dev secrets
 deploy/compose/secrets.dev.yaml
+deploy/compose/assistant-secrets.dev.yaml
+deploy/compose/*.token
 deploy/compose/*.secret
 
 # TLS helper output

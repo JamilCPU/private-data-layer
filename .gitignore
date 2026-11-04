@@ -37,3 +37,6 @@ deploy/compose/*.secret
 # TLS helper output
 lab-tls/
 deploy/k8s/lab-tls/
+deploy/compose/imap.password
+deploy/compose/bank-rules.dev.yaml
+deploy/compose/bank-csv-mappings.dev.yaml

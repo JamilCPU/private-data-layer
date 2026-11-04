@@ -104,7 +104,7 @@ jobs:
   image-check:
     # Build (never push) the images on pull requests so the Dockerfiles are exercised before main.
     if: github.event_name == 'pull_request'
-    needs: [gateway, assistant]
+    needs: [gateway, assistant, bank-mcp, email-mcp]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -118,10 +118,20 @@ jobs:
           context: assistant
           push: false
           tags: pdl-assistant:pr-${{ github.event.pull_request.number }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/bank-mcp
+          push: false
+          tags: pdl-bank-mcp:pr-${{ github.event.pull_request.number }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/email-mcp
+          push: false
+          tags: pdl-email-mcp:pr-${{ github.event.pull_request.number }}
 
   image:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [gateway, assistant, stub]
+    needs: [gateway, assistant, bank-mcp, email-mcp, stub]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -147,3 +157,17 @@ jobs:
           tags: |
             ghcr.io/jamilcpu/pdl-assistant:latest
             ghcr.io/jamilcpu/pdl-assistant:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/bank-mcp
+          push: true
+          tags: |
+            ghcr.io/jamilcpu/pdl-bank-mcp:latest
+            ghcr.io/jamilcpu/pdl-bank-mcp:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/email-mcp
+          push: true
+          tags: |
+            ghcr.io/jamilcpu/pdl-email-mcp:latest
+            ghcr.io/jamilcpu/pdl-email-mcp:${{ github.sha }}

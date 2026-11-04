@@ -1,4 +1,5 @@
-# Local development stack: gateway + homestudio-mcp + a fixture Home Studio stub + assistant.
+# Local development stack: gateway + homestudio-mcp + a fixture Home Studio stub + assistant,
+# plus postgres, bank-mcp and email-mcp (and, with `--profile jobs`, the importer and mail sync).
 # Create gateway secrets and .env first; see README.md.
 services:
   gateway:
@@ -12,6 +13,8 @@ services:
       - gateway-data:/data
     environment:
       HOMESTUDIO_MCP_SECRET: ${HOMESTUDIO_MCP_SECRET:?copy .env.example to .env and set it}
+      BANK_MCP_SECRET: ${BANK_MCP_SECRET:?copy .env.example to .env and set it}
+      EMAIL_MCP_SECRET: ${EMAIL_MCP_SECRET:?copy .env.example to .env and set it}
     healthcheck:
       test:
         - CMD
@@ -55,6 +58,136 @@ services:
       retries: 5
       start_period: 5s
 
+  # Dev-only database. The cluster uses the Lab Data Store with separate roles per source
+  # (bank_owner/bank_reader, email_owner/email_reader); here one role owns everything.
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: lab
+      POSTGRES_USER: lab_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set it}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab_dev -d lab"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  bank-mcp:
+    build: ../../servers/bank-mcp
+    ports:
+      - "127.0.0.1:8001:8000"
+    environment:
+      BANK_MCP_SHARED_SECRET: ${BANK_MCP_SECRET:?copy .env.example to .env and set it}
+      BANK_MCP_HOST: 0.0.0.0
+      BANK_MCP_PORT: "8000"
+      BANK_STORE: postgres
+      # The server only reads; the schema is created by the one-shot bank-import service below
+      # (run it once first: docker compose --profile jobs run --rm bank-import).
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: lab
+      PGUSER: lab_dev
+      PGPASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set it}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=4)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  email-mcp:
+    build: ../../servers/email-mcp
+    ports:
+      - "127.0.0.1:8002:8000"
+    environment:
+      EMAIL_MCP_SHARED_SECRET: ${EMAIL_MCP_SECRET:?copy .env.example to .env and set it}
+      EMAIL_MCP_HOST: 0.0.0.0
+      EMAIL_MCP_PORT: "8000"
+      EMAIL_STORE: postgres
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: lab
+      PGUSER: lab_dev
+      PGPASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set it}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=4)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # One-shot jobs (not started by a plain `up`): docker compose --profile jobs run --rm <name>
+  bank-import:
+    profiles: [jobs]
+    build: ../../servers/bank-mcp
+    command:
+      - pdl-bank-import
+      - --inbox
+      - /data/bank/inbox
+      - --processed
+      - /data/bank/processed
+      - --rules
+      - /etc/pdl/bank/rules.yaml
+      - --mappings
+      - /etc/pdl/bank/csv-mappings.yaml
+      - --once
+    environment:
+      BANK_STORE: postgres
+      BANK_APPLY_MIGRATIONS: "1"
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: lab
+      PGUSER: lab_dev
+      PGPASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set it}
+    volumes:
+      # ./data is gitignored; put statements in ./data/bank/inbox (see README.md).
+      - ./data/bank:/data/bank
+      - ./bank-rules.dev.yaml:/etc/pdl/bank/rules.yaml:ro
+      - ./bank-csv-mappings.dev.yaml:/etc/pdl/bank/csv-mappings.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  email-sync:
+    profiles: [jobs]
+    build: ../../servers/email-mcp
+    command: [pdl-email-sync, --once]
+    environment:
+      EMAIL_STORE: postgres
+      EMAIL_APPLY_MIGRATIONS: "1"
+      EMAIL_IMAP_HOST: ${EMAIL_IMAP_HOST:-}
+      EMAIL_IMAP_USER: ${EMAIL_IMAP_USER:-}
+      EMAIL_IMAP_PORT: "993"
+      EMAIL_MAILBOX: INBOX
+      EMAIL_INITIAL_DAYS: "90"
+      EMAIL_IMAP_PASSWORD_FILE: /run/secrets/imap.password
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: lab
+      PGUSER: lab_dev
+      PGPASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set it}
+    volumes:
+      - ./imap.password:/run/secrets/imap.password:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   assistant:
     build: ../../assistant
     ports:
@@ -93,3 +226,4 @@ services:
 volumes:
   gateway-data:
   assistant-data:
+  postgres-data:

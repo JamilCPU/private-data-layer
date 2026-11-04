@@ -8,7 +8,6 @@ import os
 import sys
 import time
 from collections import Counter
-from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import psycopg
@@ -18,6 +17,7 @@ from pdl_bank.importer import ImportResult, import_inbox
 from pdl_bank.memory_store import MemoryStore
 from pdl_bank.parsers import CsvMapping, load_mappings
 from pdl_bank.store import Store, StoreConfigError
+from pdl_bank.store_factory import store_from_env
 
 log = logging.getLogger(__name__)
 
@@ -46,24 +46,11 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
-def _load_store_factory() -> Callable[[Mapping[str, str]], Store]:
-    from pdl_bank.store_factory import store_from_env  # type: ignore[import-not-found]
-
-    return store_from_env  # type: ignore[no-any-return]
-
-
 def _open_store(use_memory: bool) -> Store | None:
     if use_memory:
         return MemoryStore()
     try:
-        factory = _load_store_factory()
-    except ModuleNotFoundError as exc:
-        if exc.name != "pdl_bank.store_factory":
-            raise
-        print("Postgres store not available yet; use --memory", file=sys.stderr)
-        return None
-    try:
-        return factory(os.environ)
+        return store_from_env(os.environ)
     except (StoreConfigError, psycopg.Error) as exc:
         print(f"cannot open store: {exc}", file=sys.stderr)
         return None

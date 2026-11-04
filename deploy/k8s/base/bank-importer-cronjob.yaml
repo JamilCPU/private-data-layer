@@ -15,6 +15,9 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      # A statement that fails to import is quarantined under inbox/failed/, so the retry and the
+      # following run succeed; retrying more than twice would not help a transient outage either.
+      backoffLimit: 2
       activeDeadlineSeconds: 600
       template:
         metadata:

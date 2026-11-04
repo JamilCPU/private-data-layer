@@ -11,6 +11,7 @@ RECENCY = ("day", "week", "month", "year")
 MIN_LIMIT = 1
 MAX_LIMIT = 10
 SNIPPET_MAX = 300
+TITLE_MAX = 200
 HTTP_RATE_LIMITED = 429
 
 
@@ -40,7 +41,7 @@ def _to_hit(item: object) -> SearchHit | None:
         return None
     published = item.get("publishedDate")
     return SearchHit(
-        title=str(item.get("title") or ""),
+        title=str(item.get("title") or "")[:TITLE_MAX],
         url=url,
         snippet=_snippet(item.get("content")),
         engine=str(item.get("engine") or ""),

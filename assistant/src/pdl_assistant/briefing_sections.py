@@ -77,7 +77,7 @@ def _reason(exc: BaseException) -> str:
 def _clean_phrase(line: str) -> str | None:
     phrase = _BULLET.sub("", line).strip()
     lowered = phrase.lower()
-    if not phrase or "://" in phrase or lowered.startswith("www."):
+    if not phrase or "://" in phrase or "www." in lowered:
         return None
     if any(not ch.isprintable() for ch in phrase):
         return None

@@ -67,15 +67,18 @@ the `automations` backend is commented out in `gateway.dev.yaml`).
 ## 4. Try the assistant
 
 The assistant runs at `http://localhost:8790` and reaches Ollama at `OLLAMA_URL` (default: the
-Docker host's port 11434; set it in `.env`, along with `ASSISTANT_MODEL`). The compose gateway's
-issuer is `http://localhost:8787`, so the browser login works from the host. The assistant
-itself calls the gateway as `http://gateway:8787` (inside the compose network), and its login
-redirects your browser to that same address. Dev-only step: add one line to your hosts file so
-the host browser can resolve it:
+Docker host's port 11434; set it in `.env`, along with `ASSISTANT_MODEL`). It calls the gateway
+at `ASSISTANT_GATEWAY_URL` (`http://gateway:8787`, the compose service name) and its login sends
+your browser to that same address. The assistant does not use OAuth discovery, so the gateway's
+issuer string does not matter for this flow; the host browser only has to resolve `gateway`.
+Dev-only step: map it to loopback in your hosts file (both ports are published on 127.0.0.1
+only):
 
 ```
 127.0.0.1 gateway
 ```
+
+Remove that line again when you are done with the dev stack.
 
 Then open `http://localhost:8790`, sign in through the gateway approval page with the passphrase
 from step 1, and ask a question.

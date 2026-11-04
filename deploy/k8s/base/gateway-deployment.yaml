@@ -36,6 +36,10 @@ spec:
           securityContext:
             runAsUser: 0
             runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            # chown needs CHOWN/FOWNER; DAC_OVERRIDE lets root read the 0600 hub certificate,
+            # which another uid owns.
+            capabilities: {drop: [ALL], add: [CHOWN, FOWNER, DAC_OVERRIDE]}
           volumeMounts:
             - {name: data, mountPath: /data}
             - {name: hub-cert, mountPath: /hub-cert.pem, readOnly: true}

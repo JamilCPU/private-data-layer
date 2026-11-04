@@ -74,7 +74,8 @@ the gateway, and talks to an Ollama server for the model. Deploy it after the ga
    kubectl -n lab create secret generic assistant-secrets --from-file=secrets.yaml=assistant-secrets.yaml --from-file=client.secret=pa.secret
    ```
    `openwebui.token` is the plaintext bearer for API clients; keep it only where they run.
-   Delete the local `assistant-secrets.yaml` afterwards.
+   Delete the local `assistant-secrets.yaml` and the local copy of `pa.secret` afterwards
+   (the Secret now holds both).
 5. **Config.** The Ollama address and model are out of band (no workstation address in git):
    ```bash
    kubectl -n lab create configmap assistant-config \

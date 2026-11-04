@@ -287,3 +287,28 @@ def test_utf16_secrets_is_config_error(tmp_path: Path) -> None:
     path.write_text(SECRETS_EXAMPLE.read_text(encoding="utf-8"), encoding="utf-16")
     with pytest.raises(ConfigError, match="not UTF-8 text"):
         load_secrets(path)
+
+
+def test_backend_url_and_ca_file_expand_env_placeholders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def mutate(raw: dict[str, Any]) -> None:
+        raw["backends"][1]["url"] = "https://${NODE_IP}:7702/mcp"
+        raw["backends"][1]["ca_file"] = "${CA_DIR}/hub.pem"
+
+    monkeypatch.setenv("NODE_IP", "203.0.113.7")
+    monkeypatch.setenv("CA_DIR", "/etc/pdl")
+    cfg = load_config(_write_variant(tmp_path, mutate))
+    assert cfg.backends[1].url == "https://203.0.113.7:7702/mcp"
+    assert cfg.backends[1].ca_file == "/etc/pdl/hub.pem"
+
+
+def test_missing_env_placeholder_is_config_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def mutate(raw: dict[str, Any]) -> None:
+        raw["backends"][1]["url"] = "https://${NOT_SET_ANYWHERE}:7702/mcp"
+
+    monkeypatch.delenv("NOT_SET_ANYWHERE", raising=False)
+    with pytest.raises(ConfigError, match="NOT_SET_ANYWHERE"):
+        load_config(_write_variant(tmp_path, mutate))

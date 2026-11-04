@@ -1,9 +1,13 @@
-"""Shared fixtures: an in-process stub of the MCP gateway (token endpoint plus /mcp)."""
+"""Shared fixtures: an in-process stub of the MCP gateway (OAuth endpoints plus /mcp)."""
 
+import base64
+import hashlib
+import secrets
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 import pytest
@@ -13,7 +17,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -29,6 +33,9 @@ class StubStats:
     mcp_requests: int = 0
     rejected: int = 0
     auth_headers: list[str] = field(default_factory=list)
+    registrations: list[dict[str, Any]] = field(default_factory=list)
+    authorize_params: list[dict[str, str]] = field(default_factory=list)
+    codes: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 class _BearerGuard:
@@ -61,10 +68,37 @@ class _BearerGuard:
         await self.app(scope, receive, send)
 
 
+def _s256(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _code_grant(form: Any, token: str, stats: StubStats) -> Response:
+    issued = stats.codes.pop(str(form.get("code", "")), None)
+    ok = (
+        issued is not None
+        and form.get("client_id") == issued["client_id"]
+        and form.get("redirect_uri") == issued["redirect_uri"]
+        and _s256(str(form.get("code_verifier", ""))) == issued["code_challenge"]
+    )
+    if not ok:
+        return JSONResponse({"error": "invalid_grant"}, status_code=400)
+    body = {
+        "access_token": f"interactive-{token}",
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "scope": "homestudio:read",
+        "refresh_token": "r-1",
+    }
+    return JSONResponse(body)
+
+
 def _token_route(token: str, secret: str, stats: StubStats) -> Route:
     async def issue(request: Request) -> Response:
         stats.token_requests += 1
         form = await request.form()
+        if form.get("grant_type") == "authorization_code":
+            return _code_grant(form, token, stats)
         ok = (
             form.get("grant_type") == "client_credentials"
             and form.get("client_id") == "personal-assistant"
@@ -83,6 +117,33 @@ def _token_route(token: str, secret: str, stats: StubStats) -> Route:
     return Route("/token", issue, methods=["POST"])
 
 
+def _oauth_routes(stats: StubStats) -> list[Route]:
+    """``/register`` (DCR) and ``/authorize`` (auto-approves: 302 back with a code)."""
+
+    async def register(request: Request) -> Response:
+        body = await request.json()
+        stats.registrations.append(body)
+        client_id = f"client-{secrets.token_hex(4)}"
+        return JSONResponse({**body, "client_id": client_id}, status_code=201)
+
+    async def authorize(request: Request) -> Response:
+        params = dict(request.query_params)
+        stats.authorize_params.append(params)
+        code = secrets.token_urlsafe(16)
+        stats.codes[code] = {
+            "client_id": params["client_id"],
+            "redirect_uri": params["redirect_uri"],
+            "code_challenge": params["code_challenge"],
+        }
+        query = urlencode({"code": code, "state": params["state"]})
+        return RedirectResponse(f"{params['redirect_uri']}?{query}", status_code=302)
+
+    return [
+        Route("/register", register, methods=["POST"]),
+        Route("/authorize", authorize, methods=["GET"]),
+    ]
+
+
 def stub_gateway_app(
     tools: dict[str, Callable[..., Any]],
     *,
@@ -90,7 +151,7 @@ def stub_gateway_app(
     secret: str = PA_SECRET,
     fail_first_mcp_401: bool = False,
 ) -> Starlette:
-    """A stub gateway: ``POST /token`` (client credentials) and a guarded FastMCP ``/mcp``."""
+    """A stub gateway: DCR, ``/authorize``, ``/token`` and a guarded FastMCP ``/mcp``."""
     server = FastMCP(
         "gateway",
         stateless_http=True,
@@ -103,7 +164,7 @@ def stub_gateway_app(
     stats = StubStats()
     guard = Middleware(_BearerGuard, token=token, stats=stats, fail_first=fail_first_mcp_401)
     app = Starlette(
-        routes=[_token_route(token, secret, stats), *mcp_app.routes],
+        routes=[_token_route(token, secret, stats), *_oauth_routes(stats), *mcp_app.routes],
         middleware=[guard],
         lifespan=lambda _app: server.session_manager.run(),
     )

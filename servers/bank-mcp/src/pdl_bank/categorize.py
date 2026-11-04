@@ -37,7 +37,10 @@ def _build_rule(index: int, entry: object) -> Rule:
 
 
 def load_rules(path: Path) -> tuple[Rule, ...]:
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise RulesError(f"rules file is not valid YAML: {exc}") from exc
     if not isinstance(data, dict) or not isinstance(data.get("rules"), list):
         raise RulesError("rules file must be a mapping with a 'rules' list")
     return tuple(_build_rule(i, e) for i, e in enumerate(data["rules"], start=1))

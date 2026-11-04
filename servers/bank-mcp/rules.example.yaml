@@ -9,7 +9,7 @@ rules:
   - category: utilities
     match: 'electric|water board|gas co|internet'
   - category: rent
-    match: 'rent|landlord'
+    match: '\brent\b|landlord'
   - category: subscriptions
     match: 'streamflix|musicbox|cloudstore'
   - category: income

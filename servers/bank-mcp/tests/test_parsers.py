@@ -59,7 +59,7 @@ def test_parentheses_negative_and_currency_symbols() -> None:
 
 def test_csv_negate_and_bom(tmp_path: Path) -> None:
     p = tmp_path / "x.csv"
-    p.write_text("﻿D,Desc,Amt\n2026-02-01,SHOP,10.00\n", encoding="utf-8")
+    p.write_text("\ufeffD,Desc,Amt\n2026-02-01,SHOP,10.00\n", encoding="utf-8")
     m = CsvMapping(
         name="n",
         match_header=("D", "Desc", "Amt"),
@@ -120,6 +120,7 @@ def test_ofx_and_qfx_fixtures() -> None:
     for name in ("sample.ofx", "sample.qfx"):
         stmt = detect_and_parse(FIX / name, MAPPINGS)
         assert stmt.account.id == "1234567890"
+        assert stmt.account.currency == "USD"
         assert stmt.account.institution == "Example Bank"
         assert len(stmt.transactions) == 3
         assert _total(stmt) == Decimal("1902.70")
@@ -152,3 +153,58 @@ def test_unknown_extension_is_parse_error(tmp_path: Path) -> None:
     p.write_bytes(b"%PDF")
     with pytest.raises(ParseError, match="unsupported"):
         detect_and_parse(p, MAPPINGS)
+
+
+def _write_csv(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / "a.csv"
+    p.write_text("Date,Description,Amount\n" + body, encoding="utf-8")
+    return p
+
+
+def test_csv_identical_rows_get_distinct_ids() -> None:
+    stmt = parse_csv(FIX / "sample_duplicates.csv", MAPPINGS)
+    assert len(stmt.transactions) == 3
+    assert len({t.id for t in stmt.transactions}) == 3
+    again = parse_csv(FIX / "sample_duplicates.csv", MAPPINGS)
+    assert [t.id for t in again.transactions] == [t.id for t in stmt.transactions]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("-$1,234.56", "-1234.56"),
+        ("($12.34)", "-12.34"),
+        ("(-12.34)", "-12.34"),
+        ("$ 5", "5"),
+    ],
+)
+def test_strict_amounts_accepted(tmp_path: Path, raw: str, expected: str) -> None:
+    p = _write_csv(tmp_path, f'2026-01-01,X,"{raw}"\n')
+    assert parse_csv(p, MAPPINGS).transactions[0].amount == Decimal(expected)
+
+
+@pytest.mark.parametrize("raw", ["NaN", "Infinity", "1e5", "(12.34", "12.34)", "12.34-", "--5"])
+def test_strict_amounts_rejected(tmp_path: Path, raw: str) -> None:
+    p = _write_csv(tmp_path, f'2026-01-01,X,"{raw}"\n')
+    with pytest.raises(ParseError, match="invalid amount"):
+        parse_csv(p, MAPPINGS)
+
+
+def test_whitespace_amount_is_skipped(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    p = _write_csv(tmp_path, '2026-01-01,X,"  "\n')
+    with caplog.at_level(logging.WARNING):
+        assert parse_csv(p, MAPPINGS).transactions == ()
+    assert "blank amount" in caplog.text
+
+
+def test_csv_error_line_number_follows_reader(tmp_path: Path) -> None:
+    p = _write_csv(tmp_path, '2026-01-01,"multi\nline",1.00\n2026-01-02,X,abc\n')
+    with pytest.raises(ParseError, match="line 4"):
+        parse_csv(p, MAPPINGS)
+
+
+def test_malformed_mappings_yaml_is_parse_error(tmp_path: Path) -> None:
+    p = tmp_path / "m.yaml"
+    p.write_text("mappings: [unclosed\n", encoding="utf-8")
+    with pytest.raises(ParseError, match="not valid YAML"):
+        load_mappings(p)

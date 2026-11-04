@@ -39,7 +39,7 @@ class MemoryStore:
         return self._messages.get(id)
 
     def search(self, query: str | None, since: datetime | None, limit: int) -> list[Message]:
-        needle = query.lower() if query else None
+        needle = query.strip().lower() if query else None
         floor = _aware(since) if since is not None else None
         hits = [m for m in self._messages.values() if _matches(m, needle, floor)]
         hits.sort(key=lambda m: m.id)

@@ -344,3 +344,15 @@ async def test_registration_error_body_is_truncated(store: MemoryStore) -> None:
         with pytest.raises(LoginError) as info:
             await _login(store, http).ensure_registered()
     assert str(info.value).count("x") == 200
+
+
+async def test_start_uses_public_gateway_url_for_the_browser(store: MemoryStore) -> None:
+    """Server-side calls go to gateway_url; the browser is sent to the public gateway URL."""
+    async with serve_gateway() as (_, http):
+        login = _login(store, http, public_gateway_url="https://gateway.public.test/")
+        await login.ensure_registered()
+        url, _ = login.start()
+    parsed = urlparse(url)
+    assert (
+        f"{parsed.scheme}://{parsed.netloc}{parsed.path}" == "https://gateway.public.test/authorize"
+    )

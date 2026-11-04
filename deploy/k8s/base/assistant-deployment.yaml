@@ -57,7 +57,11 @@ spec:
           env:
             # The browser login redirects to the gateway's public URL (its issuer), so the
             # assistant uses that same URL; it verifies the gateway's lab-CA certificate.
-            - {name: ASSISTANT_GATEWAY_URL, value: "https://gateway.lab"}
+            # Inside the cluster "gateway.lab" resolves to the gateway Service (namespace search
+            # path), so server-to-server calls use the Service over HTTP; browsers get the
+            # public ingress URL for the login redirect.
+            - {name: ASSISTANT_GATEWAY_URL, value: "http://gateway:8787"}
+            - {name: ASSISTANT_GATEWAY_PUBLIC_URL, value: "https://gateway.lab"}
             # Replaces the trust store for all outbound TLS in the pod (only the gateway is TLS).
             - {name: SSL_CERT_FILE, value: /etc/pdl/ca/lab-ca.pem}
             - {name: ASSISTANT_PUBLIC_URL, value: "https://assistant.lab"}

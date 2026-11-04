@@ -61,7 +61,7 @@ class MemoryStore:
         return new
 
     def accounts(self) -> list[Account]:
-        return sorted(self._accounts.values(), key=lambda a: a.id)
+        return sorted(self._accounts.values(), key=lambda a: (a.name, a.id))
 
     def search(
         self,

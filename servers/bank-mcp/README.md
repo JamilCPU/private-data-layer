@@ -35,6 +35,25 @@ negative), summary totals are positive.
 | `PGDATABASE` | postgres | `lab` | Database name |
 | `PGUSER` | postgres | | Database user |
 | `PGPASSWORD` | postgres | | Database password |
+| `BANK_APPLY_MIGRATIONS` | no | unset | `1` or `true` applies `migrations/*.sql` at startup. The importer CronJob sets it (owner role); the read-only server must not, its reader role cannot create tables |
+
+Migrations are plain SQL files in `migrations/`, applied in name order, each in one transaction
+and recorded in `bank.schema_migrations`; running them again does nothing. The container image
+carries the directory at `/app/migrations`.
+
+## Database
+
+Postgres schema `bank` in the Lab Data Store, created by `migrations/001_bank.sql`:
+
+- `bank.accounts(id, name, institution, currency)`
+- `bank.transactions(id, account_id, posted_on, amount numeric(14,2), description, category, source_file)`
+  with indexes on `posted_on`, `category` and `(account_id, posted_on)`
+- `bank.imports(file_hash, filename, imported_on, count)`, the ledger of imported files
+- `bank.schema_migrations(name, applied_at)`
+
+Roles come from the Lab Data Store: `bank_owner` for the importer (writes, applies migrations),
+`bank_reader` for the MCP server (select only). Both connect with the standard `PG*` variables.
+The importer job applies the migrations on every run (`BANK_APPLY_MIGRATIONS=1`).
 
 ## Importing statements
 
@@ -59,4 +78,5 @@ the same ids and nothing is stored twice.
 ## Develop
 
     uv run pytest -q
+    TEST_PG_DSN=postgresql://... uv run pytest -q   # also runs the Postgres tests (drops schema bank!)
     uv run ruff check . && uv run ruff format --check .

@@ -13,6 +13,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src ./src
+COPY migrations ./migrations
 COPY rules.example.yaml csv-mappings.example.yaml ./
 RUN uv sync --frozen --no-dev
 

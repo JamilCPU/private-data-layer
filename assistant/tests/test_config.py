@@ -180,3 +180,28 @@ def test_gateway_public_url_optional_and_validated(tmp_path: Path) -> None:
     assert cfg.gateway_public_url == "https://gateway.example"
     with pytest.raises(ConfigError, match="gateway_public_url"):
         load_config(None, {**env, "ASSISTANT_GATEWAY_PUBLIC_URL": "gateway.example"})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("ntfy_topic", "bad topic"),
+        ("ntfy_topic", "a/b"),
+        ("ntfy_topic", "x" * 65),
+        ("briefing_retry_until", "25:00"),
+        ("briefing_retry_until", "9:5"),
+        ("briefing_timezone", "Mars/Olympus"),
+        ("briefing_retry_interval_s", 0),
+        ("briefing_news_count", 0),
+    ],
+)
+def test_briefing_settings_validated(tmp_path: Path, field: str, value: object) -> None:
+    with pytest.raises(ConfigError, match=field):
+        load_config(_write(tmp_path, _yaml(**{field: value})), {})
+
+
+def test_briefing_defaults(tmp_path: Path) -> None:
+    cfg = load_config(_write(tmp_path, _yaml()), {})
+    assert (cfg.briefing_timezone, cfg.briefing_retry_until) == ("America/Chicago", "10:00")
+    assert (cfg.briefing_retry_interval_s, cfg.briefing_news_count) == (900, 3)
+    assert cfg.ntfy_topic == "briefing"

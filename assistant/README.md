@@ -44,8 +44,35 @@ uv run pdl-assistant --config assistant.example.yaml
 | `model_timeout_s` / `tool_timeout_s` | `120` / `60` | Timeouts |
 | `session_ttl_s` | `43200` | Browser session lifetime |
 | `system_prompt_extra` | `""` | Text appended to the system prompt |
+| `ntfy_url` | unset | Self-hosted ntfy base URL for notifications; unset means they are only logged |
+| `ntfy_topic` | `briefing` | ntfy topic to publish to (letters, digits, `_`, `-`; up to 64) |
+| `ntfy_token_file` | unset | File holding an ntfy access token (sent as a bearer token) |
+| `briefing_timezone` | `America/Chicago` | Time zone for the briefing date and the retry cut-off |
+| `briefing_retry_until` | `10:00` | Local `HH:MM` after which an offline model skips the day |
+| `briefing_retry_interval_s` | `900` | Seconds between probes while the model is offline |
+| `briefing_news_count` | `3` | News items in the briefing |
 
 The secrets file holds `api_tokens` (name to PBKDF2 hash) and `cookie_secret`.
+
+## Briefing
+
+`pdl-assistant-briefing` builds a morning summary and pushes it to your phone through ntfy. In the cluster it is the `briefing` CronJob (07:30 America/Chicago; `deploy/k8s/README.md`, "Briefing").
+
+- **Sections.** Home Studio listening and taste, bank spending, new email and a few news items picked from your taste profile, each summarised by the model. A section whose tool is unavailable says so instead of failing the briefing. The text is capped at 3500 characters.
+- **Offline rule.** The model server may be asleep. The job probes Ollama; while it is offline and the local time is before `briefing_retry_until` (default `10:00` in `briefing_timezone`), it sleeps `briefing_retry_interval_s` (default 900) and probes again. The cut-off is checked after each failed probe, so the final probe can land up to one retry interval after `briefing_retry_until`. Once a probe fails at or past the cut-off it records `skipped` (note `brain offline`), sends nothing, and exits 0; the next briefing opens with a line saying yesterday's was skipped.
+- **Failures.** A build or delivery error records `failed` with the text and the error, and exits 1.
+- **`--now`.** One probe, no retry. If the model is offline it exits 2 and records nothing; otherwise it builds and sends immediately. Locally: `uv run pdl-assistant-briefing --config assistant.yaml --now`.
+- **`--test-notification`.** Sends "Test from the assistant" through the configured notifier and exits 0 or 1, without touching the model or the database.
+
+Exit codes: 0 sent or skipped, 1 failed or bad configuration, 2 `--now` with the model offline.
+
+### Phone setup (ntfy)
+
+1. Install the ntfy app.
+2. Add the server `https://ntfy.lab`. Import the lab CA in the app's certificate settings; if that is not possible, use `http://ntfy.lab` as a fallback (warning: this sends the ntfy login in clear over the LAN).
+3. Log in as the owner user created in the deploy steps.
+4. Subscribe to the topic (`briefing` by default, `ntfy_topic`).
+5. Check with `pdl-assistant-briefing --test-notification`.
 
 ## Container
 

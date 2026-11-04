@@ -1,0 +1,58 @@
+# Only gateway pods may talk to search-mcp (second layer beside the shared-secret header).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: search-mcp-from-gateway
+spec:
+  podSelector:
+    matchLabels: {app: search-mcp}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app: gateway}
+      ports:
+        - {protocol: TCP, port: 8000}
+---
+# fetch_page downloads arbitrary URLs. The server refuses private addresses itself, but a DNS
+# name can resolve differently between its check and the connect (DNS rebinding). This policy
+# closes that gap at the network layer: search-mcp may reach cluster DNS, SearXNG, and only
+# public addresses on 80/443 (private, link-local, loopback and CGNAT ranges are excluded).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: search-mcp-egress
+spec:
+  podSelector:
+    matchLabels: {app: search-mcp}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - to:
+        - podSelector:
+            matchLabels: {app: searxng}
+      ports:
+        - {protocol: TCP, port: 8080}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+              - 127.0.0.0/8
+              - 100.64.0.0/10
+              - 0.0.0.0/8
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+      ports:
+        - {protocol: TCP, port: 80}
+        - {protocol: TCP, port: 443}

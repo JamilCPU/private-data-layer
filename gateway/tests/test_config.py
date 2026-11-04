@@ -30,7 +30,13 @@ def _write_variant(tmp_path: Path, mutate: Callable[[dict[str, Any]], None]) -> 
 def test_loads_example() -> None:
     cfg = load_config(EXAMPLE)
     assert cfg.issuer_url == "https://gateway.lab"
-    assert [b.name for b in cfg.backends] == ["homestudio", "automations", "bank", "email"]
+    assert [b.name for b in cfg.backends] == [
+        "homestudio",
+        "automations",
+        "bank",
+        "email",
+        "search",
+    ]
     assert cfg.backends[1].allow_tools == (
         "list_devices",
         "get_device",

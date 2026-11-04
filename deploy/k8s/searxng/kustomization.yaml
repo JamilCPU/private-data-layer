@@ -1,0 +1,15 @@
+# Own folder (lab-gitops apps/searxng). Pinned by digest.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: lab
+commonLabels:
+  app.kubernetes.io/part-of: private-data-layer
+resources:
+  - settings-configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml
+images:
+  - name: docker.io/searxng/searxng
+    newTag: 2026.11.2-cccbc9e15
+    digest: sha256:892ed5710603e38f9dc201e6a0b2f3f14dbdb8108edcadac30e55b165c979fb7

@@ -1,11 +1,14 @@
 """Typed, validated assistant configuration and secrets loading."""
 
+import re
 from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, fields
+from datetime import time
 from pathlib import Path
 from types import MappingProxyType, UnionType
 from typing import Any, Union, get_args, get_origin
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -13,6 +16,8 @@ ENV_PREFIX = "ASSISTANT_"
 _MIN_COOKIE_SECRET = 32
 _URL_FIELDS = ("gateway_url", "ollama_url", "public_url")
 _MAX_PORT = 65535
+_TOPIC = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_HHMM = re.compile(r"(\d{2}):(\d{2})")
 _MIN_TOOL_STEPS = 2  # one tool round plus the forced final answer
 _NOT_UTF8 = (
     "not UTF-8 text (PowerShell '>' writes UTF-16; "
@@ -42,6 +47,13 @@ class AssistantConfig:
     tool_timeout_s: float = 60
     session_ttl_s: int = 43200
     system_prompt_extra: str = ""
+    ntfy_url: str | None = None  # self-hosted ntfy base URL; unset means notifications are logged
+    ntfy_topic: str = "briefing"
+    ntfy_token_file: str | None = None  # file holding an ntfy access token
+    briefing_timezone: str = "America/Chicago"
+    briefing_retry_until: str = "10:00"  # local HH:MM after which an offline brain skips the day
+    briefing_retry_interval_s: int = 900
+    briefing_news_count: int = 3
 
 
 @dataclass(frozen=True)
@@ -86,6 +98,32 @@ def _check_url(name: str, value: str) -> None:
         raise ConfigError(f"{name} must be an http(s) URL, got {value!r}")
 
 
+def parse_hhmm(name: str, value: str) -> time:
+    """Parse ``HH:MM`` (24 h); anything else is a ConfigError naming the field."""
+    match = _HHMM.fullmatch(value)
+    if match is None or int(match[1]) > 23 or int(match[2]) > 59:
+        raise ConfigError(f"{name} must be HH:MM (24 h), got {value!r}")
+    return time(int(match[1]), int(match[2]))
+
+
+def _check_briefing(values: Mapping[str, Any]) -> None:
+    defaults = {f.name: f.default for f in fields(AssistantConfig)}
+    topic = values.get("ntfy_topic", defaults["ntfy_topic"])
+    if _TOPIC.fullmatch(topic) is None:
+        raise ConfigError(f"ntfy_topic must match [A-Za-z0-9_-]{{1,64}}, got {topic!r}")
+    zone = values.get("briefing_timezone", defaults["briefing_timezone"])
+    try:
+        ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError, OSError) as exc:
+        raise ConfigError(f"briefing_timezone: unknown time zone {zone!r}") from exc
+    parse_hhmm(
+        "briefing_retry_until", values.get("briefing_retry_until", defaults["briefing_retry_until"])
+    )
+    for name in ("briefing_retry_interval_s", "briefing_news_count"):
+        if values.get(name, 1) <= 0:
+            raise ConfigError(f"{name} must be > 0, got {values[name]}")
+
+
 def _check_bounds(values: Mapping[str, Any]) -> None:
     """Numeric settings that would break the service if zero, negative or out of range."""
     defaults = {f.name: f.default for f in fields(AssistantConfig)}
@@ -118,9 +156,11 @@ def load_config(path: Path | None, env: Mapping[str, str]) -> AssistantConfig:
     values = {n: _cast(n, specs[n].type, v) for n, v in merged.items()}  # type: ignore[arg-type]
     for name in _URL_FIELDS:
         _check_url(name, values[name])
-    if values.get("gateway_public_url") is not None:
-        _check_url("gateway_public_url", values["gateway_public_url"])
+    for name in ("gateway_public_url", "ntfy_url"):
+        if values.get(name) is not None:
+            _check_url(name, values[name])
     _check_bounds(values)
+    _check_briefing(values)
     return AssistantConfig(**values)
 
 

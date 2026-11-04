@@ -1,0 +1,15 @@
+# Own folder (lab-gitops apps/ntfy). Pinned by digest.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: lab
+commonLabels:
+  app.kubernetes.io/part-of: private-data-layer
+resources:
+  - server-configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+images:
+  - name: docker.io/binwiederhier/ntfy
+    newTag: v2.37.2
+    digest: sha256:1875ddcf815c8a3c981d6d78c67a93452d0abba79b1ab9520b1f5f5238902bd7

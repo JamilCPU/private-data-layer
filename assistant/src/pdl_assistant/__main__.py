@@ -21,8 +21,9 @@ from .web import build_app
 logger = logging.getLogger("pdl_assistant")
 
 
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="pdl-assistant", description=__doc__)
+def base_parser(prog: str, description: str | None) -> argparse.ArgumentParser:
+    """A parser with the ``--config`` / ``--secrets`` options every assistant command shares."""
+    parser = argparse.ArgumentParser(prog=prog, description=description)
     config = os.environ.get("ASSISTANT_CONFIG")
     secrets = os.environ.get("ASSISTANT_SECRETS")
     parser.add_argument(
@@ -37,23 +38,35 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=Path(secrets) if secrets else None,
         help="assistant secrets YAML (env ASSISTANT_SECRETS; default: secrets_file from config)",
     )
-    return parser.parse_args(argv)
+    return parser
 
 
-def _read_client_secret(path: str) -> str:
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    return base_parser("pdl-assistant", __doc__).parse_args(argv)
+
+
+def read_client_secret(path: str) -> str:
     secret = Path(path).read_text(encoding="utf-8").strip()
     if not secret:
         raise ConfigError(f"{path}: client secret file is empty")
     return secret
 
 
-def _assemble(config: AssistantConfig, secrets: AssistantSecrets, client_secret: str) -> Starlette:
-    """Build the store, clients, agent and app; the app's shutdown closes them all."""
+def build_clients(
+    config: AssistantConfig, client_secret: str
+) -> tuple[MemoryStore, GatewayClient, OllamaClient]:
+    """The SQLite store and the gateway and Ollama clients, shared by every assistant command."""
     memory = MemoryStore(config.db_path)
     gateway = GatewayClient(
         config.gateway_url, config.client_id, client_secret, tool_timeout_s=config.tool_timeout_s
     )
     llm = OllamaClient(config.ollama_url, config.model, timeout_s=config.model_timeout_s)
+    return memory, gateway, llm
+
+
+def _assemble(config: AssistantConfig, secrets: AssistantSecrets, client_secret: str) -> Starlette:
+    """Build the store, clients, agent and app; the app's shutdown closes them all."""
+    memory, gateway, llm = build_clients(config, client_secret)
     login = GatewayLogin(
         config.gateway_url, config.public_url, memory, public_gateway_url=config.gateway_public_url
     )
@@ -89,7 +102,7 @@ def _assemble(config: AssistantConfig, secrets: AssistantSecrets, client_secret:
 def _load(args: argparse.Namespace) -> tuple[AssistantConfig, Starlette]:
     config = load_config(args.config, os.environ)
     secrets = load_secrets(args.secrets or Path(config.secrets_file))
-    return config, _assemble(config, secrets, _read_client_secret(config.client_secret_file))
+    return config, _assemble(config, secrets, read_client_secret(config.client_secret_file))
 
 
 def main(argv: list[str] | None = None) -> int:

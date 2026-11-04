@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,7 @@ import psycopg
 from pdl_email.imap_source import ImapSource
 from pdl_email.memory_store import MemoryStore
 from pdl_email.store import Store, StoreConfigError
+from pdl_email.store_factory import store_from_env
 from pdl_email.sync import sync_once
 
 log = logging.getLogger("pdl_email.sync")
@@ -59,24 +60,11 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
-def _load_store_factory() -> Callable[[Mapping[str, str]], Store]:
-    from pdl_email.store_factory import store_from_env
-
-    return store_from_env
-
-
 def _open_store() -> Store | None:
     if os.environ.get("EMAIL_STORE", "").strip().lower() == "memory":
         return MemoryStore()
     try:
-        factory = _load_store_factory()
-    except ModuleNotFoundError as exc:
-        if exc.name != "pdl_email.store_factory":
-            raise
-        log.error("Postgres store not available yet; set EMAIL_STORE=memory")
-        return None
-    try:
-        return factory(os.environ)
+        return store_from_env(os.environ)
     except StoreConfigError as exc:
         log.error("store configuration error: %s", exc)
     except psycopg.Error as exc:

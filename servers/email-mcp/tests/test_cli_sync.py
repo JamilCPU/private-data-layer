@@ -101,17 +101,6 @@ def test_once_failure_exits_1(env):
     assert cli_sync.main([]) == 1
 
 
-def test_store_factory_missing_exits_2(env, caplog):
-    env.setenv("EMAIL_STORE", "postgres")
-
-    def missing():
-        raise ModuleNotFoundError("x", name="pdl_email.store_factory")
-
-    env.setattr(cli_sync, "_load_store_factory", missing)
-    assert cli_sync.main([]) == 2
-    assert "EMAIL_STORE=memory" in caplog.text
-
-
 @pytest.mark.parametrize(
     "exc", [StoreConfigError("PGUSER is required"), psycopg.OperationalError("refused")]
 )
@@ -121,7 +110,7 @@ def test_store_startup_errors_exit_2(env, caplog, exc):
     def boom(_env):
         raise exc
 
-    env.setattr(cli_sync, "_load_store_factory", lambda: boom)
+    env.setattr(cli_sync, "store_from_env", boom)
     assert cli_sync.main([]) == 2
     assert [r for r in caplog.records if r.levelno == logging.ERROR]
 
@@ -129,7 +118,7 @@ def test_store_startup_errors_exit_2(env, caplog, exc):
 def test_store_factory_seam_used(env):
     env.setenv("EMAIL_STORE", "postgres")
     mem = MemoryStore()
-    env.setattr(cli_sync, "_load_store_factory", lambda: lambda _env: mem)
+    env.setattr(cli_sync, "store_from_env", lambda _env: mem)
     got = {}
     _no_source(env)
     env.setattr(
@@ -137,17 +126,6 @@ def test_store_factory_seam_used(env):
     )
     assert cli_sync.main([]) == 0
     assert got["st"] is mem
-
-
-def test_store_factory_other_import_error_propagates(env):
-    env.setenv("EMAIL_STORE", "postgres")
-
-    def bad():
-        raise ModuleNotFoundError("nope", name="psycopg")
-
-    env.setattr(cli_sync, "_load_store_factory", bad)
-    with pytest.raises(ModuleNotFoundError):
-        cli_sync.main([])
 
 
 def test_interval_survives_errors_and_stops_on_ctrl_c(env, caplog):

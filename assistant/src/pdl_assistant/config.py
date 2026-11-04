@@ -116,7 +116,9 @@ def _check_briefing(values: Mapping[str, Any]) -> None:
         ZoneInfo(zone)
     except (ZoneInfoNotFoundError, ValueError, OSError) as exc:
         raise ConfigError(f"briefing_timezone: unknown time zone {zone!r}") from exc
-    parse_hhmm("briefing_retry_until", values.get("briefing_retry_until", "10:00"))
+    parse_hhmm(
+        "briefing_retry_until", values.get("briefing_retry_until", defaults["briefing_retry_until"])
+    )
     for name in ("briefing_retry_interval_s", "briefing_news_count"):
         if values.get(name, 1) <= 0:
             raise ConfigError(f"{name} must be > 0, got {values[name]}")

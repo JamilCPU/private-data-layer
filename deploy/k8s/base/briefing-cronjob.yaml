@@ -4,6 +4,9 @@
 # The job waits for Ollama until the local cut-off (default 10:00) and records `skipped` if it
 # stays offline, so the deadline only has to cover that wait plus the model time.
 #
+# The ownership of /data comes from the assistant Deployment's `own-data` init container, so that
+# Deployment must have run once before the first briefing job.
+#
 # Out-of-band objects (never committed; see ../README.md "Briefing"): Secret `ntfy-publish`
 # (token), ConfigMap `briefing-config` (ASSISTANT_NTFY_TOPIC, ASSISTANT_BRIEFING_TIMEZONE), plus
 # everything the assistant Deployment needs (assistant-secrets, assistant-config, lab-ca).

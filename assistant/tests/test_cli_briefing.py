@@ -1,5 +1,6 @@
 """Tests for ``pdl-assistant-briefing``: offline retry, delivery, exit codes."""
 
+from argparse import Namespace
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -73,6 +74,10 @@ def memory(tmp_path: Path):
     store.close()
 
 
+def _row_count(memory) -> int:
+    return memory._read("SELECT COUNT(*) AS n FROM briefings")[0]["n"]
+
+
 async def _run(memory, llm, notifier, start=START, retry=True, config=CONFIG):
     clock = FakeClock(start)
     status = await run_briefing(
@@ -107,6 +112,7 @@ async def test_offline_then_online_at_second_probe(memory):
     assert clock.sleeps == [900]
     assert llm.probes == 2
     assert len(notifier.sent) == 1
+    assert _row_count(memory) == 1
 
 
 async def test_offline_past_cutoff_is_skipped(memory):
@@ -234,3 +240,37 @@ def test_main_exit_codes(tmp_path, monkeypatch, status, code):
 def test_main_bad_config_is_1(tmp_path, capsys):
     assert cli_briefing.main(["--config", str(tmp_path / "missing.yaml")]) == 1
     assert "pdl-assistant-briefing" in capsys.readouterr().err
+
+
+async def test_skip_then_success_opens_with_skipped_prefix(memory):
+    from pdl_assistant.briefing import SKIPPED_PREFIX
+
+    assert (await _run(memory, FakeLlm(None), FakeNotifier()))[0] == "skipped"
+    notifier = FakeNotifier()
+    assert (await _run(memory, FakeLlm(1), notifier))[0] == "sent"
+    assert notifier.sent[0][1].startswith(SKIPPED_PREFIX)
+    assert _row_count(memory) == 2
+
+
+async def test_raising_aclose_is_logged_and_memory_still_closes(monkeypatch, caplog):
+    closed = []
+
+    class Memory:
+        def close(self) -> None:
+            closed.append(True)
+
+    class Client:
+        async def aclose(self) -> None:
+            raise RuntimeError("close boom")
+
+    async def fake_run(config, **kwargs):
+        return "sent"
+
+    monkeypatch.setattr(cli_briefing, "build_clients", lambda c, s: (Memory(), Client(), Client()))
+    monkeypatch.setattr(cli_briefing, "read_client_secret", lambda path: "s")
+    monkeypatch.setattr(cli_briefing, "run_briefing", fake_run)
+    args = Namespace(now=False)
+    with caplog.at_level("ERROR"):
+        assert await cli_briefing._run(args, CONFIG, FakeNotifier()) == 0
+    assert closed == [True]
+    assert caplog.text.count("error while closing a client") == 2

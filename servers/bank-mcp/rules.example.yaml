@@ -1,0 +1,18 @@
+# Ordered categorisation rules: the first matching rule wins (case-insensitive regex).
+rules:
+  - category: groceries
+    match: 'grocer|supermarket|market'
+  - category: restaurants
+    match: 'cafe|restaurant|pizza|diner'
+  - category: transport
+    match: 'transit|fuel|taxi|parking'
+  - category: utilities
+    match: 'electric|water board|gas co|internet'
+  - category: rent
+    match: 'rent|landlord'
+  - category: subscriptions
+    match: 'streamflix|musicbox|cloudstore'
+  - category: income
+    match: 'payroll|salary|deposit'
+  - category: transfers
+    match: 'transfer|xfer'

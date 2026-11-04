@@ -15,6 +15,15 @@ def test_id_determinism_and_normalisation() -> None:
     assert a != transaction_id("acc", date(2026, 1, 6), Decimal("-12.50"), "green grocer")
 
 
+def test_transaction_id_occurrence_suffix() -> None:
+    d, amt = date(2026, 1, 5), Decimal("-12.50")
+    first = transaction_id("acc", d, amt, "shop")
+    assert first == transaction_id("acc", d, amt, "shop", occurrence=1)
+    second = transaction_id("acc", d, amt, "shop", occurrence=2)
+    third = transaction_id("acc", d, amt, "shop", occurrence=3)
+    assert len({first, second, third}) == 3
+
+
 def test_amounts_are_decimal() -> None:
     tx = Transaction(
         id="x",

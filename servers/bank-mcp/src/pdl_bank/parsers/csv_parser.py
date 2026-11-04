@@ -6,6 +6,7 @@ import csv
 import hashlib
 import logging
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -13,11 +14,12 @@ from pathlib import Path
 
 import yaml
 
-from pdl_bank.models import Account, Transaction, transaction_id
+from pdl_bank.models import Account, Transaction, normalise_description, transaction_id
 from pdl_bank.parsers.base import ParsedStatement, ParseError, check_size
 
 log = logging.getLogger(__name__)
 _STRIP = re.compile(r"[$,\s]")
+_NUMBER = re.compile(r"-?\d+(\.\d+)?")
 
 
 @dataclass(frozen=True)
@@ -63,7 +65,10 @@ def _mapping_from(index: int, entry: object) -> CsvMapping:
 
 
 def load_mappings(path: Path) -> tuple[CsvMapping, ...]:
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ParseError(f"mappings file is not valid YAML: {exc}") from exc
     if not isinstance(data, dict) or not isinstance(data.get("mappings"), list):
         raise ParseError("mappings file must be a mapping with a 'mappings' list")
     return tuple(_mapping_from(i, e) for i, e in enumerate(data["mappings"], start=1))
@@ -73,12 +78,15 @@ def _to_decimal(raw: str) -> Decimal | None:
     text = _STRIP.sub("", raw)
     if not text:
         return None
-    negative = text.startswith("(") and text.endswith(")")
+    wrapped = text.startswith("(") and text.endswith(")")
+    inner = text[1:-1] if wrapped else text
+    if not _NUMBER.fullmatch(inner):
+        raise ParseError(f"invalid amount {raw!r}")
     try:
-        value = Decimal(text.strip("()"))
-    except InvalidOperation as exc:
+        value = Decimal(inner)
+    except InvalidOperation as exc:  # pragma: no cover - regex already guarantees validity
         raise ParseError(f"invalid amount {raw!r}") from exc
-    return -value if negative else value
+    return -abs(value) if wrapped else value
 
 
 def _row_amount(row: dict[str, str], m: CsvMapping) -> Decimal | None:
@@ -132,7 +140,9 @@ def _read_rows(
     reader: csv.DictReader, m: CsvMapping, account_id: str, source_file: str
 ) -> tuple[Transaction, ...]:
     out: list[Transaction] = []
-    for line, raw in enumerate(reader, start=2):
+    seen: Counter[tuple] = Counter()
+    for raw in reader:
+        line = reader.line_num
         row = {(k or "").strip(): (v or "") for k, v in raw.items()}
         try:
             amount = _row_amount(row, m)
@@ -143,9 +153,11 @@ def _read_rows(
         except ParseError as exc:
             raise ParseError(f"{source_file} line {line}: {exc}") from exc
         desc = row.get(m.description_col, "").strip()
+        key = (account_id, posted_on, amount, normalise_description(desc))
+        seen[key] += 1
         out.append(
             Transaction(
-                id=transaction_id(account_id, posted_on, amount, desc),
+                id=transaction_id(account_id, posted_on, amount, desc, seen[key]),
                 account_id=account_id,
                 posted_on=posted_on,
                 amount=amount,

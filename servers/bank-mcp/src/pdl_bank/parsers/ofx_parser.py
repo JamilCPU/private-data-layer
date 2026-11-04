@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import warnings
+from collections import Counter
 from pathlib import Path
 
 from ofxparse import OfxParser
 
-from pdl_bank.models import Account, Transaction, transaction_id
+from pdl_bank.models import Account, Transaction, normalise_description, transaction_id
 from pdl_bank.parsers.base import ParsedStatement, ParseError, check_size
 
 log = logging.getLogger(__name__)
@@ -20,7 +21,11 @@ def parse_ofx(path: Path) -> ParsedStatement:
     try:
         with path.open("rb") as fh, warnings.catch_warnings():
             # ofxparse still calls the bs4 findAll alias that bs4 >= 4.13 deprecates
-            warnings.filterwarnings("ignore", message="Call to deprecated method findAll")
+            warnings.filterwarnings(
+                "ignore",
+                message="Call to deprecated method findAll",
+                category=DeprecationWarning,
+            )
             ofx = OfxParser.parse(fh)
     except Exception as exc:  # ofxparse raises assorted errors on malformed input
         raise ParseError(f"{path.name}: cannot parse OFX: {exc}") from exc
@@ -32,18 +37,21 @@ def parse_ofx(path: Path) -> ParsedStatement:
         id=str(source.account_id),
         name=getattr(source, "account_type", None) or "account",
         institution=institution,
-        currency=getattr(source.statement, "currency", None) or "USD",
+        currency=(getattr(source.statement, "currency", None) or "USD").upper(),
     )
-    txs = tuple(_convert(account.id, t, path.name) for t in source.statement.transactions)
+    seen: Counter[tuple] = Counter()
+    txs = tuple(_convert(account.id, t, path.name, seen) for t in source.statement.transactions)
     log.info("parsed %d OFX transactions from %s", len(txs), path.name)
     return ParsedStatement(account, txs)
 
 
-def _convert(account_id: str, raw, source_file: str) -> Transaction:
+def _convert(account_id: str, raw, source_file: str, seen: Counter[tuple]) -> Transaction:
     description = f"{raw.payee or ''} {raw.memo or ''}".strip()
     posted_on = raw.date.date()
+    key = (account_id, posted_on, raw.amount, normalise_description(description))
+    seen[key] += 1
     return Transaction(
-        id=transaction_id(account_id, posted_on, raw.amount, description),
+        id=transaction_id(account_id, posted_on, raw.amount, description, seen[key]),
         account_id=account_id,
         posted_on=posted_on,
         amount=raw.amount,

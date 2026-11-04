@@ -111,6 +111,10 @@ class MemoryStore:
         rows = self._read("SELECT * FROM conversations ORDER BY id DESC LIMIT ?", (limit,))
         return [Conversation(**dict(row)) for row in rows]
 
+    def get_conversation(self, conversation_id: int) -> Conversation | None:
+        rows = self._read("SELECT * FROM conversations WHERE id = ?", (conversation_id,))
+        return Conversation(**dict(rows[0])) if rows else None
+
     def set_preference(self, key: str, value: str) -> None:
         self._write(
             "INSERT INTO preferences (key, value, updated_at) VALUES (?, ?, ?)"

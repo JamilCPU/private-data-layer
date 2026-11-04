@@ -1,0 +1,186 @@
+"""JSON routes: the browser chat API (session cookie) and the OpenAI-compatible ``/v1`` (bearer)."""
+
+import re
+import time
+import uuid
+from collections.abc import Callable
+from typing import Any
+
+import anyio
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
+
+from .agent import Agent
+from .auth import bearer_ok
+from .config import AssistantConfig, AssistantSecrets
+from .memory import MemoryStore
+
+MAX_MESSAGE_CHARS = 4000
+TITLE_CHARS = 60
+MESSAGES_LIMIT = 500
+_CHAT_KEYS = frozenset({"conversation_id", "message"})
+_DIGITS = re.compile(r"[0-9]{1,18}")
+
+
+def _error(message: str, status: int, headers: dict[str, str] | None = None) -> JSONResponse:
+    return JSONResponse({"error": message}, status_code=status, headers=headers)
+
+
+def _valid_text(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip() and len(value) <= MAX_MESSAGE_CHARS:
+        return value
+    return None
+
+
+def _title(text: str) -> str:
+    return " ".join(text.split())[:TITLE_CHARS]
+
+
+async def _json_body(request: Request) -> Any:
+    """The parsed JSON body, or ``...`` (Ellipsis) when the body is not JSON."""
+    try:
+        return await request.json()
+    except ValueError:
+        return ...
+
+
+def _parse_chat(body: Any) -> tuple[int | None, str] | str:
+    """``(conversation_id, message)`` or an error message."""
+    if not isinstance(body, dict) or not set(body) <= _CHAT_KEYS or "message" not in body:
+        return "body must be {conversation_id, message}"
+    cid = body.get("conversation_id")
+    if cid is not None and (not isinstance(cid, int) or isinstance(cid, bool)):
+        return "conversation_id must be an integer or null"
+    text = _valid_text(body["message"])
+    if text is None:
+        return f"message must be 1-{MAX_MESSAGE_CHARS} characters"
+    return cid, text
+
+
+def chat_routes(
+    agent: Agent, memory: MemoryStore, session_ok: Callable[[Request], bool]
+) -> list[Route]:
+    """``/api/chat`` and the conversation history routes, all behind ``session_ok``."""
+
+    async def chat(request: Request) -> Response:
+        if not session_ok(request):
+            return _error("login required", 401)
+        parsed = _parse_chat(await _json_body(request))
+        if isinstance(parsed, str):
+            return _error(parsed, 422)
+        cid, text = parsed
+        if cid is None:
+            cid = memory.new_conversation(_title(text))
+        elif memory.get_conversation(cid) is None:
+            return _error("no such conversation", 404)
+        reply = await agent.reply(cid, text)
+        return JSONResponse(
+            {
+                "conversation_id": cid,
+                "reply": reply.text,
+                "offline": reply.offline,
+                "tool_calls": list(reply.tool_calls_made),
+                "step_capped": reply.step_capped,
+            }
+        )
+
+    async def conversations(request: Request) -> Response:
+        if not session_ok(request):
+            return _error("login required", 401)
+        rows = memory.list_conversations()
+        items = [{"id": c.id, "created_at": c.created_at, "title": c.title} for c in rows]
+        return JSONResponse({"conversations": items})
+
+    async def messages(request: Request) -> Response:
+        if not session_ok(request):
+            return _error("login required", 401)
+        cid = request.path_params["conversation_id"]
+        if memory.get_conversation(cid) is None:
+            return _error("no such conversation", 404)
+        rows = memory.recent_messages(cid, limit=MESSAGES_LIMIT)
+        keys = ("role", "content", "tool_name", "created_at")
+        return JSONResponse({"messages": [{k: getattr(m, k) for k in keys} for m in rows]})
+
+    return [
+        Route("/api/chat", chat, methods=["POST"]),
+        Route("/api/conversations", conversations, methods=["GET"]),
+        Route("/api/conversations/{conversation_id:int}/messages", messages, methods=["GET"]),
+    ]
+
+
+def _content_text(content: Any) -> str | None:
+    """A message's text: a string, or the joined ``text`` parts of a content-part list."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [p.get("text") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+        return "\n".join(p for p in parts if isinstance(p, str))
+    return None
+
+
+def _last_user_text(messages: Any) -> str | None:
+    if not isinstance(messages, list):
+        return None
+    for message in reversed(messages):
+        if isinstance(message, dict) and message.get("role") == "user":
+            return _valid_text(_content_text(message.get("content")))
+    return None
+
+
+def _completion(model: str, text: str) -> dict[str, Any]:
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [
+            {"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+
+
+def openai_routes(
+    config: AssistantConfig, secrets: AssistantSecrets, agent: Agent, memory: MemoryStore
+) -> list[Route]:
+    """``GET /v1/models`` and non-streaming ``POST /v1/chat/completions`` behind a bearer token."""
+
+    async def authorized(request: Request) -> bool:
+        header = request.headers.get("authorization")  # PBKDF2 is slow: keep it off the loop
+        return await anyio.to_thread.run_sync(bearer_ok, header, secrets.api_token_hashes)
+
+    def unauthorized() -> Response:
+        return _error("a valid bearer token is required", 401, {"WWW-Authenticate": "Bearer"})
+
+    async def models(request: Request) -> Response:
+        if not await authorized(request):
+            return unauthorized()
+        data = [{"id": config.model, "object": "model", "owned_by": "local"}]
+        return JSONResponse({"object": "list", "data": data})
+
+    async def completions(request: Request) -> Response:
+        if not await authorized(request):
+            return unauthorized()
+        body = await _json_body(request)
+        if not isinstance(body, dict):
+            return _error("body must be a JSON object", 400)
+        if body.get("stream") is True:
+            return _error("streaming is not supported", 400)
+        text = _last_user_text(body.get("messages"))
+        if text is None:
+            return _error(f"the last user message must be 1-{MAX_MESSAGE_CHARS} characters", 400)
+        user = body.get("user")
+        if isinstance(user, str) and _DIGITS.fullmatch(user):
+            cid = int(user)
+            if memory.get_conversation(cid) is None:
+                return _error("no such conversation", 404)
+        else:
+            cid = memory.new_conversation(_title(text))
+        reply = await agent.reply(cid, text)
+        return JSONResponse(_completion(config.model, reply.text))
+
+    return [
+        Route("/v1/models", models, methods=["GET"]),
+        Route("/v1/chat/completions", completions, methods=["POST"]),
+    ]

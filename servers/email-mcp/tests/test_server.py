@@ -135,3 +135,17 @@ async def test_bad_since_is_tool_error(store) -> None:
 async def test_limit_out_of_range_is_error(store, limit) -> None:
     assert (await _call(store, "list_recent", {"limit": limit})).isError
     assert (await _call(store, "search_email", {"query": "a", "limit": limit})).isError
+
+
+async def test_healthz_open() -> None:
+    import httpx
+
+    from pdl_email.memory_store import MemoryStore
+    from pdl_email.middleware import SharedSecretMiddleware
+
+    inner = build_server(MemoryStore()).streamable_http_app()
+    app = SharedSecretMiddleware(inner, "s3cret")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/healthz")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}

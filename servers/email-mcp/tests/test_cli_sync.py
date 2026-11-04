@@ -1,12 +1,12 @@
 import imaplib
 import logging
-import sys
 
+import psycopg
 import pytest
 
 from pdl_email import cli_sync
 from pdl_email.memory_store import MemoryStore
-from pdl_email.store import SyncResult
+from pdl_email.store import StoreConfigError, SyncResult
 
 REQUIRED = ["EMAIL_IMAP_HOST", "EMAIL_IMAP_USER", "EMAIL_IMAP_PASSWORD_FILE"]
 
@@ -38,9 +38,37 @@ def test_missing_env_exits_2(env, missing):
     assert cli_sync.main([]) == 2
 
 
-def test_unreadable_password_file_exits_2(env, tmp_path):
+def test_unreadable_password_file_exits_2(env, tmp_path, caplog):
     env.setenv("EMAIL_IMAP_PASSWORD_FILE", str(tmp_path / "absent"))
     assert cli_sync.main([]) == 2
+    assert "EMAIL_IMAP_PASSWORD_FILE" in caplog.text
+
+
+@pytest.mark.parametrize("content", [b"", bytes([10]), bytes([255, 254, 128])])
+def test_empty_or_undecodable_password_file_exits_2(env, tmp_path, content):
+    pw = tmp_path / "bad"
+    pw.write_bytes(content)
+    env.setenv("EMAIL_IMAP_PASSWORD_FILE", str(pw))
+    assert cli_sync.main([]) == 2
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("EMAIL_IMAP_PORT", "abc"), ("EMAIL_IMAP_PORT", "0"), ("EMAIL_INITIAL_DAYS", "-3")],
+)
+def test_bad_numeric_env_exits_2(env, caplog, name, value):
+    env.setenv(name, value)
+    assert cli_sync.main([]) == 2
+    assert name in caplog.text
+
+
+def test_once_ctrl_c_returns_130(env):
+    def interrupted(*a, **k):
+        raise KeyboardInterrupt
+
+    _no_source(env)
+    env.setattr(cli_sync, "sync_once", interrupted)
+    assert cli_sync.main([]) == 130
 
 
 def test_once_reads_password_and_succeeds(env, caplog):
@@ -73,11 +101,29 @@ def test_once_failure_exits_1(env):
     assert cli_sync.main([]) == 1
 
 
-def test_store_factory_missing_exits_2(env, capsys):
+def test_store_factory_missing_exits_2(env, caplog):
     env.setenv("EMAIL_STORE", "postgres")
-    env.delitem(sys.modules, "pdl_email.store_factory", raising=False)
+
+    def missing():
+        raise ModuleNotFoundError("x", name="pdl_email.store_factory")
+
+    env.setattr(cli_sync, "_load_store_factory", missing)
     assert cli_sync.main([]) == 2
-    assert "EMAIL_STORE=memory" in capsys.readouterr().err
+    assert "EMAIL_STORE=memory" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "exc", [StoreConfigError("PGUSER is required"), psycopg.OperationalError("refused")]
+)
+def test_store_startup_errors_exit_2(env, caplog, exc):
+    env.setenv("EMAIL_STORE", "postgres")
+
+    def boom(_env):
+        raise exc
+
+    env.setattr(cli_sync, "_load_store_factory", lambda: boom)
+    assert cli_sync.main([]) == 2
+    assert [r for r in caplog.records if r.levelno == logging.ERROR]
 
 
 def test_store_factory_seam_used(env):
@@ -105,7 +151,13 @@ def test_store_factory_other_import_error_propagates(env):
 
 
 def test_interval_survives_errors_and_stops_on_ctrl_c(env, caplog):
-    outcomes = [OSError("x"), imaplib.IMAP4.error("y"), SyncResult(0, 0, False)]
+    outcomes = [
+        OSError("x"),
+        imaplib.IMAP4.error("y"),
+        RuntimeError("malformed"),
+        psycopg.OperationalError("db"),
+        SyncResult(0, 0, False),
+    ]
     runs = []
 
     def fake_sync(*a, **k):
@@ -119,7 +171,7 @@ def test_interval_survives_errors_and_stops_on_ctrl_c(env, caplog):
 
     def fake_sleep(sec):
         sleeps.append(sec)
-        if len(sleeps) == 3:
+        if len(sleeps) == 5:
             raise KeyboardInterrupt
 
     _no_source(env)
@@ -127,7 +179,8 @@ def test_interval_survives_errors_and_stops_on_ctrl_c(env, caplog):
     env.setattr(cli_sync.time, "sleep", fake_sleep)
     with caplog.at_level(logging.INFO):
         assert cli_sync.main(["--interval", "30"]) == 0
-    assert len(runs) == 3 and sleeps == [30, 30, 30]
+    assert len(runs) == 5 and sleeps == [30] * 5
+    assert caplog.text.count("will retry") == 4
     assert "interrupted" in caplog.text
 
 

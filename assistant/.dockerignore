@@ -1,0 +1,12 @@
+.venv
+__pycache__
+tests
+.pytest_cache
+*.db
+.coverage
+.ruff_cache
+htmlcov
+*.yaml
+!assistant.example.yaml
+*.secret
+*.token

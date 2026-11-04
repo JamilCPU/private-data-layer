@@ -111,11 +111,11 @@ async def test_tool_error_result_is_passed_through(asgi_factory: AsgiFactory) ->
             httpx_client_factory=asgi_factory(stub),
         )
 
-        result = await backend.call_tool("explode", {"device": "pi-host"})
+        result = await backend.call_tool("explode", {"device": "speaker-pi"})
 
     assert result.isError
     assert isinstance(result.content[0], mcp.types.TextContent)
-    assert "cannot reach pi-host" in result.content[0].text
+    assert "cannot reach speaker-pi" in result.content[0].text
 
 
 async def test_call_tool_passes_arguments(

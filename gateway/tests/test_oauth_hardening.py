@@ -133,7 +133,7 @@ async def test_dcr_accepts_loopback_redirect_uris(http: httpx.AsyncClient, uri: 
     [
         ["https://evil.example/callback"],
         ["http://localhost.evil.example/callback"],
-        ["http://localhost:6274/callback", "http://<dev-workstation>:6274/callback"],
+        ["http://localhost:6274/callback", "http://203.0.113.5:6274/callback"],
         ["myapp://callback"],
     ],
 )

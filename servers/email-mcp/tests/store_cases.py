@@ -122,6 +122,12 @@ def case_like_wildcards_are_literal(store):
     assert store.search("_", None, 10) == []
 
 
+def case_duplicate_id_within_one_batch_counts_once(store):
+    assert store.upsert_messages([make(1, body="first"), make(1, body="second")]) == 1
+    assert store.get(make(1).id).body_text == "first"
+    assert len(store.search(None, None, 10)) == 1
+
+
 CASES = [
     case_round_trip_and_new_count_without_overwrite,
     case_search_each_field_case_insensitive,
@@ -132,4 +138,5 @@ CASES = [
     case_substring_search_matches_inside_words,
     case_search_combines_query_and_since,
     case_like_wildcards_are_literal,
+    case_duplicate_id_within_one_batch_counts_once,
 ]

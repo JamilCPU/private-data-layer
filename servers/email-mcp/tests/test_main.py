@@ -1,10 +1,12 @@
 """main(): env validation, store selection and the uvicorn hand-off."""
 
+import psycopg
 import pytest
 
 from pdl_email import __main__ as entry
 from pdl_email.memory_store import MemoryStore
 from pdl_email.middleware import SharedSecretMiddleware
+from pdl_email.store import StoreConfigError
 
 ENV = ("EMAIL_MCP_SHARED_SECRET", "EMAIL_MCP_HOST", "EMAIL_MCP_PORT", "EMAIL_STORE")
 
@@ -54,7 +56,7 @@ def test_main_postgres_without_factory_fails(monkeypatch, capsys, runs) -> None:
     monkeypatch.setenv("EMAIL_MCP_SHARED_SECRET", "s3cret")
 
     def missing():
-        raise ImportError("no store_factory")
+        raise ModuleNotFoundError("no store_factory", name="pdl_email.store_factory")
 
     monkeypatch.setattr(entry, "_load_store_factory", missing)
     assert entry.main([]) == 1
@@ -81,4 +83,33 @@ def test_main_rejects_invalid_store(monkeypatch, capsys, runs) -> None:
     monkeypatch.setenv("EMAIL_STORE", "sqlite")
     assert entry.main([]) == 1
     assert "EMAIL_STORE must be memory or postgres" in capsys.readouterr().err
+    assert runs == []
+
+
+def test_main_unrelated_missing_module_propagates(monkeypatch, runs) -> None:
+    monkeypatch.setenv("EMAIL_MCP_SHARED_SECRET", "s3cret")
+
+    def broken():
+        raise ModuleNotFoundError("No module named 'psycopg_pool'", name="psycopg_pool")
+
+    monkeypatch.setattr(entry, "_load_store_factory", broken)
+    with pytest.raises(ModuleNotFoundError):
+        entry.main([])
+    assert runs == []
+
+
+@pytest.mark.parametrize(
+    "error",
+    [StoreConfigError("EMAIL_DB_HOST is required"), psycopg.OperationalError("connection refused")],
+)
+def test_main_store_open_failure_exits_cleanly(monkeypatch, capsys, runs, error) -> None:
+    monkeypatch.setenv("EMAIL_MCP_SHARED_SECRET", "s3cret")
+
+    def factory(env):
+        raise error
+
+    monkeypatch.setattr(entry, "_load_store_factory", lambda: factory)
+    assert entry.main([]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("email-mcp: ") and str(error) in err
     assert runs == []

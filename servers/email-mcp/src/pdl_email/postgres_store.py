@@ -72,7 +72,10 @@ def _message(row: Sequence[Any]) -> Message:
 
 def _search_clause(query: str) -> tuple[str, list[Any]]:
     """WHERE fragment for a non-blank query: full text OR ILIKE (ILIKE only when short)."""
-    ilike = " OR ".join(f"{f} ILIKE %s" for f in _ILIKE_FIELDS)
+    # The OR'd ILIKE terms stop the planner using the GIN index on tsv, so every search scans the
+    # table; acceptable at single-mailbox scale. ESCAPE is explicit so the helper's backslash
+    # escaping holds regardless of server settings.
+    ilike = " OR ".join(f"{f} ILIKE %s ESCAPE '\\'" for f in _ILIKE_FIELDS)
     params: list[Any] = [_like_pattern(query)] * len(_ILIKE_FIELDS)
     if len(query) >= _FULLTEXT_MIN_CHARS:
         return f"(tsv @@ plainto_tsquery('simple', %s) OR {ilike})", [query, *params]

@@ -189,3 +189,14 @@ def test_interval_must_be_positive_and_exclusive(env):
         cli_sync.main(["--interval", "0"])
     with pytest.raises(SystemExit):
         cli_sync.main(["--once", "--interval", "5"])
+
+
+def test_config_repr_hides_password(env):
+    cfg = cli_sync._load_config()
+    assert cfg is not None and cfg.password == "s3cret"
+    assert "s3cret" not in repr(cfg)
+
+
+def test_memory_store_selection_is_case_insensitive(env):
+    env.setenv("EMAIL_STORE", " Memory ")
+    assert isinstance(cli_sync._open_store(), MemoryStore)

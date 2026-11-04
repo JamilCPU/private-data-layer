@@ -513,3 +513,44 @@ def test_login_limiter_window_expires() -> None:
     now[0] = 110.0  # the first two starts are now outside the window
     assert limiter.allow() and limiter.allow()
     assert not limiter.allow()
+
+
+async def test_openai_new_conversation_is_seeded_from_request(rig: Rig) -> None:
+    msgs = [
+        {"role": "system", "content": "be terse"},
+        {"role": "user", "content": "first question"},
+        {"role": "assistant", "content": "first answer"},
+        {"role": "tool", "content": "tool noise"},
+        {"role": "user", "content": [{"type": "text", "text": "second question"}]},
+        {"role": "assistant", "content": "second answer"},
+        {"role": "user", "content": "last question"},
+    ]
+    resp = await rig.client.post("/v1/chat/completions", json={"messages": msgs}, headers=_bearer())
+
+    assert resp.status_code == 200
+    ((cid, text),) = rig.agent.calls
+    assert text == "last question"
+    rows = [(m.role, m.content) for m in rig.memory.recent_messages(cid, limit=100)]
+    assert rows == [
+        ("user", "first question"),
+        ("assistant", "first answer"),
+        ("user", "second question"),
+        ("assistant", "second answer"),
+        ("user", "last question"),
+        ("assistant", "Hi there."),
+    ]
+
+
+async def test_openai_seed_keeps_last_20_and_skips_existing_conversation(rig: Rig) -> None:
+    prior = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"p{i}"} for i in range(30)]
+    msgs = [*prior, {"role": "user", "content": "now"}]
+    await rig.client.post("/v1/chat/completions", json={"messages": msgs}, headers=_bearer())
+    cid = rig.agent.calls[0][0]
+    seeded = [m.content for m in rig.memory.recent_messages(cid, limit=100)][:-2]
+    assert seeded == [f"p{i}" for i in range(10, 30)]
+
+    existing = rig.memory.new_conversation("kept")
+    await rig.client.post(
+        "/v1/chat/completions", json={"messages": msgs, "user": str(existing)}, headers=_bearer()
+    )
+    assert len(rig.memory.recent_messages(existing, limit=100)) == 2, "no seeding when it exists"

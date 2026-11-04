@@ -1,5 +1,7 @@
 """Typed, validated gateway configuration and secrets loading."""
 
+import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -107,6 +109,24 @@ def _env_name(raw: dict[str, Any], key: str, backend: str) -> str | None:
     return value
 
 
+_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _expand(value: str | None, what: str, env: Mapping[str, str] | None = None) -> str | None:
+    """Replace ``${NAME}`` with the environment value; an unset name is a ConfigError."""
+    if value is None:
+        return None
+    source = os.environ if env is None else env
+
+    def sub(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if not source.get(name):
+            raise ConfigError(f"{what}: environment variable {name} is not set")
+        return source[name]
+
+    return _PLACEHOLDER.sub(sub, value)
+
+
 def _backend(raw: dict[str, Any]) -> BackendConfig:
     name = raw["name"]
     _check_keys(raw, {f.name for f in fields(BackendConfig)}, f"backend {name!r}")
@@ -120,13 +140,13 @@ def _backend(raw: dict[str, Any]) -> BackendConfig:
         allow_tools = _string_list(raw["allow_tools"], f"backend {name!r}: allow_tools")
     return BackendConfig(
         name=name,
-        url=raw["url"],
+        url=_expand(raw["url"], f"backend {name!r}: url"),
         scope=raw["scope"],
         allow_tools=allow_tools,
         secret_header=header,
         secret_env=secret_env,
         bearer_env=bearer_env,
-        ca_file=raw.get("ca_file"),
+        ca_file=_expand(raw.get("ca_file"), f"backend {name!r}: ca_file"),
     )
 
 

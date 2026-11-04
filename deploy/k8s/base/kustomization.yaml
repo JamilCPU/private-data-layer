@@ -1,5 +1,5 @@
 # Copy of lab-gitops apps/private-data-layer (the deployed version); keep the two in sync.
-# homestudio-mcp is pulled from GHCR by digest; pdl-gateway, pdl-assistant, pdl-bank-mcp and pdl-email-mcp are built on
+# homestudio-mcp is pulled from GHCR by digest; pdl-gateway, pdl-assistant, pdl-bank-mcp, pdl-email-mcp and pdl-search-mcp are built on
 # the primary node into the lab registry until their GHCR packages are public. Bump tags/digests here.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -25,6 +25,9 @@ resources:
   - email-mcp-deployment.yaml
   - email-mcp-service.yaml
   - email-mcp-networkpolicy.yaml
+  - search-mcp-deployment.yaml
+  - search-mcp-service.yaml
+  - search-mcp-networkpolicy.yaml
   - email-sync-cronjob.yaml
 images:
   # Tags are the git sha the image was built from; the lab-gitops copy carries the deployed pins.
@@ -35,6 +38,8 @@ images:
   - name: registry.lab/lab/pdl-bank-mcp
     newTag: latest
   - name: registry.lab/lab/pdl-email-mcp
+    newTag: latest
+  - name: registry.lab/lab/pdl-search-mcp
     newTag: latest
   - name: ghcr.io/jamilcpu/homestudio-mcp
     digest: sha256:fec0bc38f8462cbb10298c14f48511cc421aa022f0e2a47925b653ffe5d5ee71

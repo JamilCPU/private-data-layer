@@ -1,0 +1,57 @@
+# Read-only MCP server for web search (via SearXNG) and page fetching. Reachable only from the
+# gateway (ClusterIP + NetworkPolicy + shared-secret header). Its outbound traffic is restricted
+# by search-mcp-egress in search-mcp-networkpolicy.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search-mcp
+  labels: {app: search-mcp}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: search-mcp}
+  template:
+    metadata:
+      labels: {app: search-mcp}
+    spec:
+      nodeSelector:
+        role: primary-worker   # amd64 image
+      # Without this, Kubernetes injects SEARCH_MCP_PORT=tcp://<cluster-ip>:8000 from the
+      # Service of the same name, which the server reads as its listen port.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: search-mcp
+          image: registry.lab/lab/pdl-search-mcp:latest
+          imagePullPolicy: Always
+          ports:
+            - {name: http, containerPort: 8000}
+          env:
+            - {name: SEARCH_MCP_HOST, value: "0.0.0.0"}
+            - {name: SEARCH_MCP_PORT, value: "8000"}
+            - {name: SEARCH_SEARXNG_URL, value: "http://searxng:8080"}
+            - name: SEARCH_MCP_SHARED_SECRET
+              valueFrom: {secretKeyRef: {name: gateway-secrets, key: SEARCH_MCP_SECRET}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}

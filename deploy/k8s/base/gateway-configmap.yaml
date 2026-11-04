@@ -35,6 +35,11 @@ data:
         scope: email:read
         secret_header: X-Gateway-Secret
         secret_env: EMAIL_MCP_SECRET
+      - name: search
+        url: http://search-mcp:8000/mcp
+        scope: search:read
+        secret_header: X-Gateway-Secret
+        secret_env: SEARCH_MCP_SECRET
     grants:
       - name: personal-assistant
         kind: headless

@@ -193,12 +193,64 @@ Only the `personal-assistant` grant sees these tools; `interactive-default` does
    appear. A token for an interactive client (Claude Code via `claude mcp add`) lists none of
    them, and calling one answers "unknown tool".
 
+## Search
+
+`search-mcp` gives the `personal-assistant` grant web search and page fetching (`search_web_search`,
+`search_fetch_page`) through the gateway; `interactive-default` does not see them. It queries
+SearXNG (next section) and its image is built like the others.
+
+1. **Image.** Built on the primary node; the controller pins the sha in `kustomization.yaml`
+   (placeholder tag `latest`):
+   ```bash
+   docker build -t registry.lab:5000/lab/pdl-search-mcp:<git-sha> servers/search-mcp/ && docker push registry.lab:5000/lab/pdl-search-mcp:<git-sha>
+   ```
+2. **Gateway secret.** Add the shared secret to `gateway-secrets` (the server and the gateway
+   read the same key), then restart the gateway:
+   ```bash
+   kubectl -n lab patch secret gateway-secrets --type merge -p "{\"stringData\":{\"SEARCH_MCP_SECRET\":\"$(python -c 'import secrets; print(secrets.token_urlsafe(32))')\"}}"
+   kubectl -n lab rollout restart deploy/gateway
+   ```
+3. **Egress policy.** `search-mcp-egress` limits the pod to cluster DNS, SearXNG on 8080 and public
+   addresses on 80/443 (private, link-local, loopback and CGNAT ranges are excluded). It backs up
+   the fetcher's own URL checks, which cannot see a DNS name that re-resolves to a private address
+   between check and connect. `searxng-egress` does the same for SearXNG. Both need the NetworkPolicy
+   controller that k3s ships.
+4. **Verify.** As the `personal-assistant` client `search_web_search` returns results; a token for
+   an interactive client (Claude Code) lists no `search_*` tool and a call answers "unknown tool".
+   `search_fetch_page` with `http://gateway.lab/` is refused.
+
+## SearXNG and ntfy
+
+Both live in their own folders (`searxng/`, `ntfy/`; in `lab-gitops` as `apps/searxng` and
+`apps/ntfy`), pinned by digest in their kustomizations.
+
+1. **SearXNG.** Cluster-internal only (`searxng:8080`). Create its secret key, then apply the folder:
+   ```bash
+   kubectl -n lab create secret generic searxng --from-literal=secret_key="$(openssl rand -hex 32)"
+   ```
+   `settings.yml` is mounted by subPath and the root filesystem stays writable because the image
+   writes `/etc/searxng/uwsgi.ini` at start; no user override is set, so the image's entrypoint
+   drops privileges itself. If the pod fails on a missing capability, check its log before adding
+   one back. Without egress to the search engines (or with the policy blocking them) searches
+   return empty result sets, so test with a query after the first start.
+2. **ntfy.** Message cache and user database live on the primary node and must belong to uid 1000
+   (the `ntfy` user in the image):
+   ```bash
+   sudo mkdir -p /data/lab/ntfy/{cache,lib}
+   sudo chown -R 1000:1000 /data/lab/ntfy
+   ```
+   The Ingress publishes `https://ntfy.lab` with a certificate from the `lab-ca` issuer (Secret
+   `ntfy-lab-tls`, issued automatically). The phone needs the lab CA installed; `http://` to the
+   Service is the fallback if the ntfy app cannot use the user CA store.
+3. **Users and publish token.** Created out of band after the pod is up; see the "Briefing"
+   subsection under "Assistant" for the user, the access rule and the `ntfy-publish` Secret.
+
 ## Notes
 
 - The gateway pod stays in `ContainerCreating` until `gateway-secrets` exists;
   `homestudio-mcp` until `homestudio-mcp-config` exists too. Bank and email need more: see
   "Bank and email".
-- `homestudio-mcp`, `bank-mcp` and `email-mcp` are amd64-only today, hence the same node pin as the gateway.
+- `homestudio-mcp`, `bank-mcp`, `email-mcp` and `search-mcp` are amd64-only today, hence the same node pin as the gateway.
 - Scopes, grants and backends are in the ConfigMap's `gateway.yaml`; changing a grant takes
   effect for existing tokens on their next use (the gateway narrows live tokens to the current
   grant) but a restart is needed to reload the file.

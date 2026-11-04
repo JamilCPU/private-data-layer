@@ -1,0 +1,57 @@
+# ntfy push server for the daily briefing. State (message cache, user database) lives on the
+# primary node under /data/lab/ntfy; the directories must belong to uid 1000 (README).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ntfy
+  labels: {app: ntfy}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: ntfy}
+  template:
+    metadata:
+      labels: {app: ntfy}
+    spec:
+      nodeSelector:
+        role: primary-worker
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: ntfy
+          image: docker.io/binwiederhier/ntfy:v2.37.2
+          args: ["serve"]
+          ports:
+            - {name: http, containerPort: 80}
+          readinessProbe:
+            httpGet: {path: /v1/health, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /v1/health, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            # Port 80 is bound by uid 1000, which needs NET_BIND_SERVICE.
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE"]
+          volumeMounts:
+            - {name: config, mountPath: /etc/ntfy/server.yml, subPath: server.yml, readOnly: true}
+            - {name: cache, mountPath: /var/cache/ntfy}
+            - {name: lib, mountPath: /var/lib/ntfy}
+      volumes:
+        - name: config
+          configMap: {name: ntfy-server}
+        - name: cache
+          hostPath: {path: /data/lab/ntfy/cache, type: Directory}
+        - name: lib
+          hostPath: {path: /data/lab/ntfy/lib, type: Directory}

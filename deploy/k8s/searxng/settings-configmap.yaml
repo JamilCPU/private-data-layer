@@ -1,0 +1,20 @@
+# SearXNG settings. The secret key is not here: the image reads SEARXNG_SECRET from the
+# environment (Secret `searxng`, key `secret_key`; see ../README.md).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: searxng-settings
+data:
+  settings.yml: |
+    use_default_settings: true
+    search:
+      formats: [html, json]
+      safe_search: 1
+      autocomplete: ""
+    server:
+      limiter: false
+      image_proxy: false
+      method: GET
+    outgoing:
+      request_timeout: 6.0
+      max_request_timeout: 10.0

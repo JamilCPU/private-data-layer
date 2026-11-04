@@ -23,6 +23,11 @@ backends:
     scope: email:read
     secret_header: X-Gateway-Secret
     secret_env: EMAIL_MCP_SECRET
+  - name: search
+    url: http://search-mcp:8000/mcp
+    scope: search:read
+    secret_header: X-Gateway-Secret
+    secret_env: SEARCH_MCP_SECRET
   # The automations backend needs the Personal Automations MCP server, which the
   # compose stack does not run. To try it against a real one, uncomment this block,
   # point `url` at it, and then:

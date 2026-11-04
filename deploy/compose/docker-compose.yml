@@ -1,5 +1,5 @@
 # Local development stack: gateway + homestudio-mcp + a fixture Home Studio stub + assistant,
-# plus postgres, bank-mcp and email-mcp (and, with `--profile jobs`, the importer and mail sync).
+# plus postgres, bank-mcp, email-mcp and search-mcp (with SearXNG) (and, with `--profile jobs`, the importer and mail sync).
 # Create gateway secrets and .env first; see README.md.
 services:
   gateway:
@@ -15,6 +15,7 @@ services:
       HOMESTUDIO_MCP_SECRET: ${HOMESTUDIO_MCP_SECRET:?copy .env.example to .env and set it}
       BANK_MCP_SECRET: ${BANK_MCP_SECRET:?copy .env.example to .env and set it}
       EMAIL_MCP_SECRET: ${EMAIL_MCP_SECRET:?copy .env.example to .env and set it}
+      SEARCH_MCP_SECRET: ${SEARCH_MCP_SECRET:?copy .env.example to .env and set it}
     healthcheck:
       test:
         - CMD
@@ -120,6 +121,44 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set it}
     depends_on:
       postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=4)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Dev-only metasearch backend for search-mcp (the cluster runs it in deploy/k8s/searxng).
+  searxng:
+    image: docker.io/searxng/searxng:2026.11.2-cccbc9e15
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?copy .env.example to .env and set it}
+      SEARXNG_BASE_URL: http://searxng:8080/
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  search-mcp:
+    build: ../../servers/search-mcp
+    ports:
+      - "127.0.0.1:8003:8000"
+    environment:
+      SEARCH_MCP_SHARED_SECRET: ${SEARCH_MCP_SECRET:?copy .env.example to .env and set it}
+      SEARCH_MCP_HOST: 0.0.0.0
+      SEARCH_MCP_PORT: "8000"
+      SEARCH_SEARXNG_URL: http://searxng:8080
+    depends_on:
+      searxng:
         condition: service_healthy
     healthcheck:
       test:

@@ -121,3 +121,12 @@ def test_get_conversation(store: MemoryStore):
     assert found is not None
     assert (found.id, found.title) == (cid, "hello")
     assert store.get_conversation(cid + 1) is None
+
+
+def test_last_sent_briefing_at_coerces_naive_to_utc(store: MemoryStore):
+    from datetime import UTC
+
+    store.record_briefing("2026-11-03T07:00:00", "sent", "t", None)
+    got = store.last_sent_briefing_at()
+    assert got is not None and got.tzinfo is UTC
+    assert got.hour == 7

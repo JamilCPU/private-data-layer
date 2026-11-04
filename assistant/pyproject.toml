@@ -12,11 +12,13 @@ dependencies = [
     "pydantic>=2",
     "python-multipart>=0.0.9",
     "itsdangerous>=2.2",
+    "tzdata>=2024.1",
 ]
 
 [project.scripts]
 pdl-assistant = "pdl_assistant.__main__:main"
 pdl-assistant-new-api-token = "pdl_assistant.cli_tokens:new_api_token"
+pdl-assistant-briefing = "pdl_assistant.cli_briefing:main"
 
 [dependency-groups]
 dev = [

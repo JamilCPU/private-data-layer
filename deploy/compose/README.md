@@ -1,6 +1,6 @@
 # Local development with Docker Compose
 
-Runs the gateway, `homestudio-mcp`, a fixture Home Studio stub, the assistant, a dev Postgres, `bank-mcp` and `email-mcp` on one machine. The stub
+Runs the gateway, `homestudio-mcp`, a fixture Home Studio stub, the assistant, a dev Postgres, `bank-mcp` `email-mcp` and `search-mcp` (with a dev SearXNG) on one machine. The stub
 (`stub-homestudio/`) answers the read endpoints with fixed made-up data, so nothing here
 touches the real Home Studio server.
 
@@ -8,11 +8,11 @@ All commands below run from this directory (`deploy/compose`).
 
 ## 1. Create the secrets
 
-`.env` holds the shared secrets the gateway sends to `homestudio-mcp`, `bank-mcp` and `email-mcp` (generate a fresh value for each `*_SECRET`) and the dev Postgres password:
+`.env` holds the shared secrets the gateway sends to `homestudio-mcp`, `bank-mcp`, `email-mcp` and `search-mcp` (generate a fresh value for each `*_SECRET`), SearXNG's own `SEARXNG_SECRET` and the dev Postgres password:
 
 ```sh
 cp .env.example .env
-# put a fresh value after each placeholder (HOMESTUDIO_MCP_SECRET, BANK_MCP_SECRET, EMAIL_MCP_SECRET, POSTGRES_PASSWORD)
+# put a fresh value after each placeholder (HOMESTUDIO_MCP_SECRET, BANK_MCP_SECRET, EMAIL_MCP_SECRET, SEARCH_MCP_SECRET, SEARXNG_SECRET, POSTGRES_PASSWORD)
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
@@ -109,6 +109,14 @@ file before any `docker compose --profile jobs up` or `run`; otherwise Docker cr
 of that name in its place and the sync fails. The `jobs` profile keeps both
 one-shot services out of a plain `docker compose up`. The servers are published on
 127.0.0.1:8001 (bank) and 127.0.0.1:8002 (email).
+
+## 6. Search (optional)
+
+`search-mcp` (web search and page fetch) talks to a dev `searxng` container configured by
+`searxng/settings.yml` (no secrets; the key is `SEARXNG_SECRET` from `.env`). Both start with a
+plain `docker compose up`; `search-mcp` is published on 127.0.0.1:8003. Only the
+`personal-assistant` grant sees the `search_*` tools. The compose network does not have the
+cluster's egress NetworkPolicy, so `fetch_page` relies on the server's own address checks here.
 
 ## Notes
 

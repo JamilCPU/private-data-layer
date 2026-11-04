@@ -13,6 +13,7 @@ ENV_PREFIX = "ASSISTANT_"
 _MIN_COOKIE_SECRET = 32
 _URL_FIELDS = ("gateway_url", "ollama_url", "public_url")
 _MAX_PORT = 65535
+_MIN_TOOL_STEPS = 2  # one tool round plus the forced final answer
 _NOT_UTF8 = (
     "not UTF-8 text (PowerShell '>' writes UTF-16; "
     "use Set-Content -Encoding utf8 or run the command in bash)"
@@ -82,11 +83,13 @@ def _check_url(name: str, value: str) -> None:
 
 def _check_bounds(values: Mapping[str, Any]) -> None:
     """Numeric settings that would break the service if zero, negative or out of range."""
-    port = values.get("listen_port", 8790)
+    defaults = {f.name: f.default for f in fields(AssistantConfig)}
+    port = values.get("listen_port", defaults["listen_port"])
     if not 1 <= port <= _MAX_PORT:
         raise ConfigError(f"listen_port must be 1-{_MAX_PORT}, got {port}")
-    if values.get("max_tool_steps", 1) < 1:
-        raise ConfigError(f"max_tool_steps must be >= 1, got {values['max_tool_steps']}")
+    steps = values.get("max_tool_steps", defaults["max_tool_steps"])
+    if steps < _MIN_TOOL_STEPS:
+        raise ConfigError(f"max_tool_steps must be >= {_MIN_TOOL_STEPS}, got {steps}")
     for name in ("model_timeout_s", "tool_timeout_s", "session_ttl_s"):
         if values.get(name, 1) <= 0:
             raise ConfigError(f"{name} must be > 0, got {values[name]}")

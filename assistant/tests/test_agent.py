@@ -181,12 +181,12 @@ async def test_step_cap_empty_final_text_gets_fallback(harness: Harness) -> None
     assert reply.tool_calls_made == (TASTE,)
 
 
-async def test_final_step_plain_answer_carries_note(harness: Harness) -> None:
+async def test_final_step_plain_answer_is_unchanged(harness: Harness) -> None:
     llm = ScriptedLlm([_asks(ToolCall(TASTE, {})), _says("You like jazz.")])
 
     reply = await harness.agent(llm, max_tool_steps=2).reply(harness.conversation, "taste?")
 
-    assert reply == Reply("You like jazz." + CAP_NOTE, (TASTE,), offline=False, step_capped=True)
+    assert reply == Reply("You like jazz.", (TASTE,), offline=False, step_capped=True)
     assert llm.calls[1][1] == []
 
 
@@ -195,7 +195,7 @@ async def test_single_step_answers_without_tools_or_note(harness: Harness) -> No
 
     reply = await harness.agent(llm, max_tool_steps=1).reply(harness.conversation, "hi")
 
-    assert reply == Reply("Hello.", (), offline=False, step_capped=False)
+    assert reply == Reply("Hello.", (), offline=False, step_capped=True)
     assert llm.calls[0][1] == []
 
 

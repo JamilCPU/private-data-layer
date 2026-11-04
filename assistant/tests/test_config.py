@@ -146,6 +146,7 @@ def test_example_files_load():
     ("field", "value"),
     [
         ("max_tool_steps", 0),
+        ("max_tool_steps", 1),
         ("listen_port", 0),
         ("listen_port", 65536),
         ("model_timeout_s", 0),
@@ -159,5 +160,6 @@ def test_numeric_bounds(tmp_path: Path, field: str, value: int):
 
 
 def test_numeric_bounds_edges_accepted(tmp_path: Path):
-    cfg = load_config(_write(tmp_path, _yaml(max_tool_steps=1, listen_port=65535)), {})
-    assert (cfg.max_tool_steps, cfg.listen_port) == (1, 65535)
+    cfg = load_config(_write(tmp_path, _yaml(max_tool_steps=2, listen_port=65535)), {})
+    assert (cfg.max_tool_steps, cfg.listen_port) == (2, 65535)
+    assert load_config(_write(tmp_path, _yaml(listen_port=1)), {}).listen_port == 1

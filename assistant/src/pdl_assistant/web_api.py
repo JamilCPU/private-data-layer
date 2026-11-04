@@ -25,6 +25,8 @@ MAX_ID = 2**63
 _INVALID = object()  # body was not parseable JSON
 _CHAT_KEYS = frozenset({"conversation_id", "message"})
 _DIGITS = re.compile(r"[0-9]{1,18}")
+SEED_LIMIT = 20
+_SEED_ROLES = frozenset({"user", "assistant"})
 
 
 def _error(message: str, status: int, headers: dict[str, str] | None = None) -> JSONResponse:
@@ -142,13 +144,27 @@ def _content_text(content: Any) -> str | None:
     return None
 
 
-def _last_user_text(messages: Any) -> str | None:
+def _last_user_index(messages: Any) -> int | None:
+    """Index of the last ``user`` message, if ``messages`` is a list holding one."""
     if not isinstance(messages, list):
         return None
-    for message in reversed(messages):
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
         if isinstance(message, dict) and message.get("role") == "user":
-            return _valid_text(_content_text(message.get("content")))
+            return index
     return None
+
+
+def _prior_turns(messages: list[Any]) -> list[tuple[str, str]]:
+    """The request's earlier ``user``/``assistant`` texts (last ``SEED_LIMIT``), in order."""
+    turns: list[tuple[str, str]] = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") not in _SEED_ROLES:
+            continue
+        text = _content_text(message.get("content"))
+        if text and text.strip():
+            turns.append((message["role"], text[:MAX_MESSAGE_CHARS]))
+    return turns[-SEED_LIMIT:]
 
 
 def _completion(model: str, text: str) -> dict[str, Any]:
@@ -162,6 +178,14 @@ def _completion(model: str, text: str) -> dict[str, Any]:
         ],
         "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }
+
+
+def _seeded_conversation(memory: MemoryStore, text: str, prior: list[Any]) -> int:
+    """A new conversation holding the request's own earlier turns, so the agent sees them."""
+    cid = memory.new_conversation(_title(text))
+    for role, content in _prior_turns(prior):
+        memory.add_message(cid, role, content)
+    return cid
 
 
 def openai_routes(
@@ -192,7 +216,9 @@ def openai_routes(
             return _error("body must be a JSON object", 400)
         if body.get("stream") is True:
             return _error("streaming is not supported", 400)
-        text = _last_user_text(body.get("messages"))
+        messages = body.get("messages")
+        last = _last_user_index(messages)
+        text = None if last is None else _valid_text(_content_text(messages[last].get("content")))
         if text is None:
             return _error(f"the last user message must be 1-{MAX_MESSAGE_CHARS} characters", 400)
         user = body.get("user")
@@ -201,7 +227,7 @@ def openai_routes(
             if memory.get_conversation(cid) is None:
                 return _error("no such conversation", 404)
         else:
-            cid = memory.new_conversation(_title(text))
+            cid = _seeded_conversation(memory, text, messages[:last])
         reply = await agent.reply(cid, text)
         return JSONResponse(_completion(config.model, reply.text))
 

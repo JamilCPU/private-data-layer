@@ -1,11 +1,13 @@
-# gateway.lab on :443 only. Traefik terminates TLS with the lab certificate in the out-of-band
-# Secret `gateway-lab-tls` (made by ../make-lab-tls.sh); OAuth issuer rules forbid plain HTTP.
+# gateway.lab on :443 only. Traefik terminates TLS with the certificate cert-manager issues from
+# the lab CA into Secret `gateway-lab-tls`; OAuth issuer rules forbid plain HTTP.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: gateway
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # cert-manager issues and renews the certificate from the lab CA into the TLS Secret below.
+    cert-manager.io/cluster-issuer: lab-ca
 spec:
   tls:
     - hosts: [gateway.lab]

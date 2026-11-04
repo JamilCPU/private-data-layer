@@ -5,6 +5,7 @@ passphrase; headless grants (e.g. ``personal-assistant``) use only ``client_cred
 Tokens are opaque random strings, persisted hashed and revocable.
 """
 
+import ipaddress
 import logging
 import secrets
 import time
@@ -58,6 +59,35 @@ def _is_loopback(uri: object) -> bool:
     return parts.scheme in ("http", "https") and parts.hostname in _LOOPBACK_HOSTS
 
 
+def issuer_parent_domain(issuer_url: str) -> str | None:
+    """The domain above the issuer's host (``gateway.lab`` -> ``lab``), else None.
+
+    None for single-label hosts, ``localhost`` and IP addresses: they have no parent domain.
+    """
+    host = (urlsplit(issuer_url).hostname or "").lower()
+    if not host or host in _LOOPBACK_HOSTS:
+        return None
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return None
+    _, dot, parent = host.partition(".")
+    return parent if dot and parent else None
+
+
+def _redirect_allowed(uri: object, parent_domain: str | None) -> bool:
+    """Loopback, or https whose host is ``parent_domain`` or a subdomain of it."""
+    if _is_loopback(uri):
+        return True
+    if parent_domain is None:
+        return False
+    parts = urlsplit(str(uri))
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "https" and host.endswith("." + parent_domain)
+
+
 @cache
 def _dummy_hash() -> str:
     """A hash to verify against for unknown clients, so timing does not reveal them."""
@@ -104,13 +134,15 @@ class GatewayAuthProvider:
         The stored ``scope`` is every configured scope, which is only what the SDK's
         ``/authorize`` check (``client.validate_scope``) accepts; codes and tokens are
         always pinned to ``config.interactive_scopes`` in ``complete_approval``.
-        Only loopback redirect URIs are accepted (Claude Code and MCP Inspector use them).
+        Redirect URIs must be loopback (Claude Code, MCP Inspector) or https under the
+        issuer's parent domain (e.g. ``https://assistant.lab/...`` for issuer ``https://gateway.lab``).
         """
         uris = client_info.redirect_uris or []
-        if not uris or not all(_is_loopback(uri) for uri in uris):
+        parent = issuer_parent_domain(self.config.issuer_url)
+        if not uris or not all(_redirect_allowed(uri, parent) for uri in uris):
             raise RegistrationError(
                 "invalid_redirect_uri",
-                "redirect_uris must be loopback (localhost, 127.0.0.1 or [::1])",
+                "redirect_uris must be loopback or https under the gateway's domain",
             )
         accepted = " ".join(self.config.scopes)
         self._store.save_client(client_info.model_copy(update={"scope": accepted}))

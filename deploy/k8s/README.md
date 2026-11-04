@@ -8,14 +8,12 @@ committed files**: those are created out of band with `kubectl` and this folder'
 
 ## To deploy
 
-1. **Images.** CI publishes `pdl-gateway` (this repo) and `homestudio-mcp`
-   (`home-studio-server`) to GHCR. Mirror them into the lab registry from a node that can reach
-   both, for example with skopeo:
+1. **Images.** `homestudio-mcp` is pulled straight from GHCR by digest (public package). The
+   `pdl-gateway` GHCR package is private, so until it is made public the image is built on the
+   primary node into the lab registry and pinned by tag in `kustomization.yaml`:
    ```bash
-   skopeo copy --dest-tls-verify=false docker://ghcr.io/jamilcpu/homestudio-mcp:latest docker://registry.lab:5000/jamil/homestudio-mcp:latest
-   docker build -t registry.lab:5000/jamil/pdl-gateway:latest gateway/ && docker push registry.lab:5000/jamil/pdl-gateway:latest
+   docker build -t registry.lab:5000/lab/pdl-gateway:<git-sha> gateway/ && docker push registry.lab:5000/lab/pdl-gateway:<git-sha>
    ```
-   (`pdl-gateway` is built from source until its GHCR package is public.)
 2. **TLS.** `bash make-lab-tls.sh gateway.lab gateway-lab-tls` creates a lab CA (first run) and
    the server certificate, and prints the `kubectl create secret tls` command. Install
    `lab-ca.pem` on each client machine; Claude Code runs on Node, which ignores the OS trust
@@ -34,11 +32,12 @@ committed files**: those are created out of band with `kubectl` and this folder'
 4. **Manifests.** Copy `base/` to `lab-gitops/apps/private-data-layer/`, add the folder to
    `apps/kustomization.yaml`, commit and push. Flux applies it within a minute
    (`flux get kustomizations`, `kubectl -n lab get pods -l app.kubernetes.io/part-of=private-data-layer`).
-5. **Automations backend.** Once the Automations MCP server's certificate is available as a
-   ConfigMap (`automations-ca`, key `automations-ca.pem`), add `AUTOMATIONS_MCP_TOKEN` to
-   `gateway-secrets`, mount the ConfigMap at `/etc/pdl/automations-ca.pem`, and uncomment the
-   `automations` backend in `gateway-configmap.yaml`. The gateway refuses to start if a
-   configured `ca_file` is missing, which is why the backend ships commented out.
+5. **Automations backend.** Wired in the manifests: the Automations MCP server runs with host
+   networking on the primary node and its certificate names only that node address, so the
+   gateway reaches it at `https://${NODE_IP}:7702/mcp` (the address comes from the downward API
+   and the gateway expands the placeholder at startup), trusts the hub certificate that the init
+   container copies from the node data disk, and sends the bearer token from the existing
+   `pa-mcp` Secret. Nothing to create by hand beyond what the Automations app already has.
 6. **Verify.** `curl https://gateway.lab/healthz` (with the lab CA installed) answers
    `{"ok": true}`; `claude mcp add --transport http pdl-gateway https://gateway.lab/mcp`
    leads to the approval page; after approving, the Home Studio read tools are listed and a call

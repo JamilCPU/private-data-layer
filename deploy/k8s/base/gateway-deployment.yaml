@@ -28,17 +28,21 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       initContainers:
         # hostPath directories are created root-owned; hand them to the gateway's uid once.
+        # Also copies the hub certificate (root-readable only on the node) to a volume the
+        # gateway can read; it is the CA for the Automations backend.
         - name: own-data
           image: busybox:1.37
-          command: [sh, -c, "chown -R 10001:10001 /data"]
+          command: [sh, -c, "chown -R 10001:10001 /data && cp /hub-cert.pem /ca/automations-ca.pem && chmod 0444 /ca/automations-ca.pem"]
           securityContext:
             runAsUser: 0
             runAsNonRoot: false
           volumeMounts:
             - {name: data, mountPath: /data}
+            - {name: hub-cert, mountPath: /hub-cert.pem, readOnly: true}
+            - {name: ca, mountPath: /ca}
       containers:
         - name: gateway
-          image: registry.lab/jamil/pdl-gateway:latest
+          image: registry.lab/lab/pdl-gateway:99f3ef2
           imagePullPolicy: Always
           ports:
             - {name: http, containerPort: 8787}
@@ -46,8 +50,13 @@ spec:
             # Only the backend credentials become env vars; the Secret's secrets.yaml key is a file.
             - name: HOMESTUDIO_MCP_SECRET
               valueFrom: {secretKeyRef: {name: gateway-secrets, key: HOMESTUDIO_MCP_SECRET}}
+            # pa-mcp runs with hostNetwork on the primary node and its certificate names only that
+            # node's address, so the gateway reaches it at https://${NODE_IP}:7702 (expanded by the
+            # gateway at startup) with the hub certificate as CA, using pa-mcp's own bearer token.
+            - name: NODE_IP
+              valueFrom: {fieldRef: {fieldPath: status.hostIP}}
             - name: AUTOMATIONS_MCP_TOKEN
-              valueFrom: {secretKeyRef: {name: gateway-secrets, key: AUTOMATIONS_MCP_TOKEN, optional: true}}
+              valueFrom: {secretKeyRef: {name: pa-mcp, key: PA_MCP_HTTP_TOKEN}}
           readinessProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 10
@@ -67,6 +76,7 @@ spec:
             - {name: secrets, mountPath: /etc/pdl/secrets.yaml, subPath: secrets.yaml, readOnly: true}
             - {name: data, mountPath: /data}
             - {name: tmp, mountPath: /tmp}
+            - {name: ca, mountPath: /etc/pdl/ca, readOnly: true}
       volumes:
         - name: config
           configMap: {name: gateway-config}
@@ -75,4 +85,9 @@ spec:
         - name: data
           hostPath: {path: /data/lab/private-data-layer, type: DirectoryOrCreate}
         - name: tmp
+          emptyDir: {}
+        - name: hub-cert
+          # Only the certificate file (key.pem sits next to it).
+          hostPath: {path: /data/lab/personal-automations/personal-automations/hub/cert.pem, type: File}
+        - name: ca
           emptyDir: {}

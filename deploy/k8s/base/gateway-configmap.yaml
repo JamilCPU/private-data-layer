@@ -19,15 +19,12 @@ data:
         scope: homestudio:read
         secret_header: X-Gateway-Secret
         secret_env: HOMESTUDIO_MCP_SECRET
-      # Automations (pa-mcp) is enabled once its TLS trust is settled: it serves TLS with its own
-      # pinned certificate, so the gateway needs that certificate as ca_file (mounted from an
-      # out-of-band ConfigMap) and a URL whose name the certificate covers.
-      # - name: automations
-      #   url: https://mcp.automations.lab/mcp
-      #   scope: automations:read
-      #   bearer_env: AUTOMATIONS_MCP_TOKEN
-      #   ca_file: /etc/pdl/automations-ca.pem
-      #   allow_tools: [list_devices, get_device, list_programs, get_program, get_program_logs, get_usb_power, recent_history]
+      - name: automations
+        url: https://${NODE_IP}:7702/mcp
+        scope: automations:read
+        bearer_env: AUTOMATIONS_MCP_TOKEN
+        ca_file: /etc/pdl/ca/automations-ca.pem
+        allow_tools: [list_devices, get_device, list_programs, get_program, get_program_logs, get_usb_power, recent_history]
     grants:
       - name: personal-assistant
         kind: headless

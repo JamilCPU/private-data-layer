@@ -50,3 +50,12 @@ the Pi is updated to the merged version; the Automations backend is commented ou
 config until its pinned certificate is mounted as the gateway's CA; a Claude Code session on the
 workstation needs the lab DNS (for `gateway.lab`) and the lab CA (`NODE_EXTRA_CA_CERTS`) before it
 can connect to the cluster gateway (it was verified against a local gateway on 2026-11-02).
+
+### Automations backend on the cluster (2026-11-03)
+
+After the Automations backend was wired (node address via the downward API, hub certificate as
+CA, token from the Automations Secret): an interactive token lists exactly the 12 Home Studio and
+Automations read tools; `automations_list_devices` and `automations_get_device` return live hub
+data; `automations_reboot_device`, `bank_spend_summary` and `gateway_audit_search` answer
+`unknown tool`; the headless client lists 13 tools; the audit log holds every call. The step 1
+"done" definition therefore holds on the cluster, not only on a workstation.

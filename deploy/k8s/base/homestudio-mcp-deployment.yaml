@@ -27,7 +27,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: homestudio-mcp
-          image: registry.lab/jamil/homestudio-mcp:latest
+          image: ghcr.io/jamilcpu/homestudio-mcp@sha256:fec0bc38f8462cbb10298c14f48511cc421aa022f0e2a47925b653ffe5d5ee71
           imagePullPolicy: Always
           ports:
             - {name: http, containerPort: 8000}

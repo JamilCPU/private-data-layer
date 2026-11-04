@@ -13,6 +13,7 @@ out="${3:-./lab-tls}"
 mkdir -p "$out" && chmod 700 "$out"
 if [[ ! -f "$out/lab-ca.key" ]]; then
   openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=lab CA" \
+    -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
     -keyout "$out/lab-ca.key" -out "$out/lab-ca.pem" >/dev/null 2>&1
   echo "created CA: $out/lab-ca.pem (keep $out/lab-ca.key offline)"
 fi

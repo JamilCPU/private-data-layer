@@ -5,6 +5,7 @@ import pytest
 
 from pdl_bank.memory_store import MemoryStore
 from pdl_bank.models import Account, Transaction
+from pdl_bank.recurring import recurring_key
 from pdl_bank.store import RecurringCharge, Store, SummaryRow
 
 
@@ -98,6 +99,22 @@ def test_search_limit(store: MemoryStore) -> None:
     assert _search(store, limit=2) == ["3", "4"]
 
 
+def test_search_limit_zero_clamps_to_one(store: MemoryStore) -> None:
+    assert len(_search(store, limit=0)) == 1
+
+
+def test_reupsert_does_not_overwrite(store: MemoryStore) -> None:
+    changed = tx("1", date(2026, 1, 5), "-999.00", "Changed")
+    assert store.upsert_transactions([changed]) == 0
+    assert store.search("Green", None, None, None, None, 100)[-1].amount == Decimal("-50.00")
+
+
+def test_duplicate_id_in_batch_counts_once() -> None:
+    s = MemoryStore()
+    dup = [tx("1", date(2026, 1, 1), "-1", "x"), tx("1", date(2026, 1, 1), "-1", "x")]
+    assert s.upsert_transactions(dup) == 1
+
+
 def test_summary_by_category(store: MemoryStore) -> None:
     rows = store.summary(date(2026, 1, 1), date(2026, 2, 28), "category")
     assert rows == [
@@ -178,3 +195,36 @@ def test_import_ledger() -> None:
     s.record_import("h1", "a.csv", date(2026, 4, 1), 5)
     assert s.was_imported("h1")
     assert not s.was_imported("h2")
+
+
+def test_recurring_rounds_half_up() -> None:
+    s = MemoryStore()
+    s.upsert_transactions(
+        [
+            tx("a", date(2026, 1, 1), "-12.50", "Svc"),
+            tx("b", date(2026, 2, 1), "-13.49", "Svc"),
+            tx("c", date(2026, 3, 1), "-12.49", "Svc"),
+        ]
+    )
+    assert s.recurring(min_occurrences=2) == [
+        RecurringCharge("svc", Decimal("13.49"), 2, date(2026, 2, 1), 31)
+    ]
+
+
+def test_recurring_key_falls_back_when_empty() -> None:
+    assert recurring_key("  12345  ") == "12345"
+    s = MemoryStore()
+    s.upsert_transactions([tx(f"n{i}", date(2026, i, 1), "-10", "9999") for i in (1, 2, 3)])
+    assert [r.description_key for r in s.recurring()] == ["9999"]
+
+
+def test_cadence_single_gap_and_median_of_three() -> None:
+    s = MemoryStore()
+    s.upsert_transactions(
+        [tx("a", date(2026, 1, 1), "-5", "A"), tx("b", date(2026, 1, 8), "-5", "A")]
+    )
+    assert s.recurring(min_occurrences=2)[0].cadence_days == 7
+    s2 = MemoryStore()
+    days = [date(2026, 1, 1), date(2026, 1, 11), date(2026, 1, 14), date(2026, 2, 13)]
+    s2.upsert_transactions([tx(f"x{i}", d, "-5", "B") for i, d in enumerate(days)])
+    assert s2.recurring()[0].cadence_days == 10  # gaps 10, 3, 30 -> median 10

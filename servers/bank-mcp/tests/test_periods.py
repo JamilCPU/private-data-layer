@@ -37,7 +37,21 @@ def test_last_month_wraps_year() -> None:
 
 @pytest.mark.parametrize(
     "text",
-    ["", "soon", "2026-13", "last 0 days", "last x days", "smarch", "march abc", "12345"],
+    [
+        "",
+        "soon",
+        "2026-13",
+        "last 0 days",
+        "last x days",
+        "smarch",
+        "march abc",
+        "12345",
+        "0000",
+        "0000-05",
+        "march 0000",
+        "last 800000 days",
+        "٢٠٢٦",
+    ],
 )
 def test_resolve_period_errors(text: str) -> None:
     with pytest.raises(PeriodError, match="unrecognised period"):

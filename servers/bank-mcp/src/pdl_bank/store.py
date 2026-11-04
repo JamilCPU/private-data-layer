@@ -53,7 +53,9 @@ class Store(Protocol):
         min_amount: Decimal | None,
         max_amount: Decimal | None,
         limit: int,
-    ) -> list[Transaction]: ...
+    ) -> list[Transaction]:
+        """Newest first; ``limit`` is clamped to a minimum of 1 (0 returns one row)."""
+        ...
 
     def summary(self, since: date, until: date, group_by: GroupBy) -> list[SummaryRow]: ...
 

@@ -163,3 +163,20 @@ def test_numeric_bounds_edges_accepted(tmp_path: Path):
     cfg = load_config(_write(tmp_path, _yaml(max_tool_steps=2, listen_port=65535)), {})
     assert (cfg.max_tool_steps, cfg.listen_port) == (2, 65535)
     assert load_config(_write(tmp_path, _yaml(listen_port=1)), {}).listen_port == 1
+
+
+def test_gateway_public_url_optional_and_validated(tmp_path: Path) -> None:
+    env = {
+        "ASSISTANT_GATEWAY_URL": "http://gateway:8787",
+        "ASSISTANT_OLLAMA_URL": "http://ollama.example:11434",
+        "ASSISTANT_MODEL": "m",
+        "ASSISTANT_CLIENT_SECRET_FILE": "/run/secret",
+        "ASSISTANT_SECRETS_FILE": "/etc/pdl/s.yaml",
+        "ASSISTANT_DB_PATH": str(tmp_path / "a.db"),
+        "ASSISTANT_PUBLIC_URL": "https://assistant.example",
+    }
+    assert load_config(None, env).gateway_public_url is None
+    cfg = load_config(None, {**env, "ASSISTANT_GATEWAY_PUBLIC_URL": "https://gateway.example"})
+    assert cfg.gateway_public_url == "https://gateway.example"
+    with pytest.raises(ConfigError, match="gateway_public_url"):
+        load_config(None, {**env, "ASSISTANT_GATEWAY_PUBLIC_URL": "gateway.example"})

@@ -1,5 +1,7 @@
 # Copy to assistant.yaml. Any field can be overridden by an ASSISTANT_<FIELD> env var.
 gateway_url: https://gateway.example
+# Optional: the gateway URL browsers should use when it differs (e.g. in-cluster service vs ingress host).
+# gateway_public_url: https://gateway.example
 ollama_url: http://ollama.example:11434
 model: qwen3.5:27b
 client_id: personal-assistant

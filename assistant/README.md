@@ -50,3 +50,5 @@ The secrets file holds `api_tokens` (name to PBKDF2 hash) and `cookie_secret`.
 ## Container
 
 The image (`ghcr.io/jamilcpu/pdl-assistant`) runs as uid 10001, listens on 8790, keeps state under `/data` and has a health check on `/healthz` (set `ASSISTANT_PORT` if you change `listen_port`). For the cluster deployment, see `deploy/k8s/README.md`.
+
+`ASSISTANT_GATEWAY_PUBLIC_URL` (optional) is the gateway address the browser is sent to for login when it differs from `ASSISTANT_GATEWAY_URL` (inside the cluster the assistant talks to the gateway service over HTTP, while the browser needs the public ingress host).

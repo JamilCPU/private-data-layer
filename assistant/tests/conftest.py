@@ -134,9 +134,11 @@ STUB_TOOLS: dict[str, Callable[..., Any]] = {
 
 
 @asynccontextmanager
-async def serve_gateway(**kwargs: Any) -> AsyncIterator[tuple[Starlette, httpx.AsyncClient]]:
+async def serve_gateway(
+    tools: dict[str, Callable[..., Any]] | None = None, **kwargs: Any
+) -> AsyncIterator[tuple[Starlette, httpx.AsyncClient]]:
     """Run a stub gateway with its lifespan; yield it and an httpx client bound to it."""
-    app = stub_gateway_app(STUB_TOOLS, **kwargs)
+    app = stub_gateway_app(STUB_TOOLS if tools is None else tools, **kwargs)
     async with (
         LifespanManager(app),
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as http,

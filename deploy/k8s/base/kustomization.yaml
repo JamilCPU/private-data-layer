@@ -26,16 +26,14 @@ resources:
   - email-mcp-networkpolicy.yaml
   - email-sync-cronjob.yaml
 images:
+  # Tags are the git sha the image was built from; the lab-gitops copy carries the deployed pins.
   - name: registry.lab/lab/pdl-gateway
     newTag: 395260f
   - name: registry.lab/lab/pdl-assistant
-    # Placeholder: the controller pins the built git sha here.
     newTag: latest
   - name: registry.lab/lab/pdl-bank-mcp
-    # Placeholder: the controller pins the built git sha here.
     newTag: latest
   - name: registry.lab/lab/pdl-email-mcp
-    # Placeholder: the controller pins the built git sha here.
     newTag: latest
   - name: ghcr.io/jamilcpu/homestudio-mcp
     digest: sha256:fec0bc38f8462cbb10298c14f48511cc421aa022f0e2a47925b653ffe5d5ee71

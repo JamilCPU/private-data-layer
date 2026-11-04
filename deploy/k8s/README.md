@@ -138,6 +138,11 @@ Only the `personal-assistant` grant sees these tools; `interactive-default` does
    kubectl -n lab create configmap email-sync-config --from-literal=EMAIL_IMAP_HOST=<imap-host> --from-literal=EMAIL_IMAP_USER=<mailbox-user>
    uv run --project servers/email-mcp pdl-email-set-password --out imap.password
    kubectl -n lab create secret generic email-imap --from-file=imap.password=imap.password
+   ```
+   The `email-sync` CronJob ships with `suspend: true`; once both objects exist, set it to `false`
+   in lab-gitops (or `kubectl -n lab patch cronjob email-sync -p '{"spec":{"suspend":false}}'`
+   until the next sync of the manifests).
+   ```bash
    shred -u imap.password
    ```
 6. **Statement inbox.** The importer reads `inbox` and moves handled files to `processed` under

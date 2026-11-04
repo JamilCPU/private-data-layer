@@ -25,6 +25,8 @@ log = logging.getLogger(__name__)
 
 CLIENT_ID_KEY = "oauth_client_id"
 CLIENT_NAME = "private-data-layer assistant"
+MAX_PENDING_LOGINS = 256
+_ERROR_BODY_CHARS = 200
 _SALT = "pdl-assistant-session"
 
 
@@ -82,6 +84,7 @@ def bearer_ok(header_value: str | None, hashes: Mapping[str, str]) -> bool:
 
 @dataclass(frozen=True)
 class _Pending:
+    client_id: str
     verifier: str
     created_at: float
 
@@ -145,7 +148,9 @@ class GatewayLogin:
         except httpx.HTTPError as exc:
             raise LoginError(f"gateway unreachable: {exc}") from exc
         if resp.status_code != 201:
-            raise LoginError(f"registration refused ({resp.status_code}): {resp.text}")
+            raise LoginError(
+                f"registration refused ({resp.status_code}): {resp.text[:_ERROR_BODY_CHARS]}"
+            )
         client_id = _json_field(resp, "client_id")
         if not client_id:
             raise LoginError("registration reply has no client_id")
@@ -163,6 +168,8 @@ class GatewayLogin:
         cutoff = self._clock() - self._pending_ttl_s
         for state in [s for s, p in self._pending.items() if p.created_at < cutoff]:
             del self._pending[state]
+        while len(self._pending) >= MAX_PENDING_LOGINS:  # dicts keep insertion order
+            del self._pending[next(iter(self._pending))]
 
     def start(self) -> tuple[str, str]:
         """``(authorize_url, state)``; the PKCE verifier stays here, keyed by ``state``."""
@@ -170,7 +177,7 @@ class GatewayLogin:
         self._purge_expired()
         state = secrets.token_urlsafe(32)
         verifier = secrets.token_urlsafe(48)
-        self._pending[state] = _Pending(verifier=verifier, created_at=self._clock())
+        self._pending[state] = _Pending(client_id, verifier, created_at=self._clock())
         params = {
             "response_type": "code",
             "client_id": client_id,
@@ -192,7 +199,7 @@ class GatewayLogin:
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": self._redirect_uri,
-            "client_id": self._client_id(),
+            "client_id": pending.client_id,
             "code_verifier": pending.verifier,
             "resource": f"{self._gateway}/mcp",
         }

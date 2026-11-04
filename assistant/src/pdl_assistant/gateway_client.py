@@ -124,7 +124,7 @@ def _translate(exc: BaseException) -> BaseException:
 
 
 def _tool_result(result: CallToolResult) -> ToolResult:
-    text = "".join(block.text for block in result.content if isinstance(block, TextContent))
+    text = "\n".join(block.text for block in result.content if isinstance(block, TextContent))
     return ToolResult(text=text, is_error=bool(result.isError), structured=result.structuredContent)
 
 

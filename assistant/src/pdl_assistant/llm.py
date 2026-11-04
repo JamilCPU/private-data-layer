@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import anyio
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -111,10 +112,11 @@ class OllamaClient:
     async def probe(self) -> bool:
         """True when Ollama answers within 3 s and serves the configured model; never raises."""
         try:
-            response = await self._http.get(f"{self._base}/api/tags", timeout=_PROBE_TIMEOUT_S)
-            response.raise_for_status()
-            names = [str(m["name"]) for m in response.json()["models"]]
-        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            with anyio.fail_after(_PROBE_TIMEOUT_S):
+                response = await self._http.get(f"{self._base}/api/tags", timeout=_PROBE_TIMEOUT_S)
+                response.raise_for_status()
+                names = [str(m["name"]) for m in response.json()["models"]]
+        except Exception as exc:  # noqa: BLE001 - the probe must never raise
             logger.info("ollama probe failed: %s", exc or type(exc).__name__)
             return False
         return _model_listed(self.model, names)

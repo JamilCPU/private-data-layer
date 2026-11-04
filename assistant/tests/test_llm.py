@@ -162,3 +162,39 @@ async def test_injected_client_is_used() -> None:
         assert await client.probe() is True
         await client.aclose()  # does not close an injected client
         assert not http.is_closed
+
+
+def test_offline_text_is_exact() -> None:
+    assert OFFLINE_TEXT == "Brain is offline (workstation asleep or GPU busy). Try again later."
+
+
+@respx.mock
+async def test_malformed_tool_arguments_is_llm_error() -> None:
+    route = respx.post(f"{BASE}/api/chat")
+    for arguments in ("{not json", "[1, 2]"):
+        call = {"function": {"name": "homestudio_get_taste_profile", "arguments": arguments}}
+        route.mock(return_value=_reply({"role": "assistant", "content": "", "tool_calls": [call]}))
+        with pytest.raises(LlmError):
+            await _client().chat([ChatMessage("user", "hi")], [])
+
+
+@respx.mock
+async def test_probe_never_raises_on_unexpected_error() -> None:
+    respx.get(f"{BASE}/api/tags").mock(side_effect=RuntimeError("boom"))
+    assert await _client().probe() is False
+
+
+async def test_probe_is_bounded_in_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    import anyio
+
+    from pdl_assistant import llm
+
+    monkeypatch.setattr(llm, "_PROBE_TIMEOUT_S", 0.05)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await anyio.sleep(5)
+        return _tags(MODEL)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        with anyio.fail_after(2):
+            assert await OllamaClient(BASE, MODEL, http=http).probe() is False

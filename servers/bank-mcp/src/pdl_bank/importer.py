@@ -100,6 +100,16 @@ def _move_processed(path: Path, processed: Path, file_hash: str | None) -> None:
         log.warning("could not move %s to %s: %s", path.name, processed, exc)
 
 
+def _quarantine(path: Path, failed: Path) -> None:
+    try:
+        failed.mkdir(parents=True, exist_ok=True)
+        dest = _destination(failed, path, None)
+        shutil.move(str(path), str(dest))
+        log.warning("quarantined %s as %s", path.name, dest)
+    except OSError as exc:
+        log.warning("could not quarantine %s to %s: %s", path.name, failed, exc)
+
+
 def import_inbox(
     inbox: Path,
     store: Store,
@@ -108,6 +118,12 @@ def import_inbox(
     *,
     processed: Path | None,
 ) -> list[ImportResult]:
+    """Import every statement file in ``inbox``.
+
+    With ``processed`` set, imported and duplicate files move there; a file that errored is
+    quarantined under ``<inbox>/failed/`` so the next run does not fail on it again. Directory
+    entries are never scanned, so ``failed/`` is not rescanned.
+    """
     if processed is not None:
         processed.mkdir(parents=True, exist_ok=True)
     results: list[ImportResult] = []
@@ -118,4 +134,6 @@ def import_inbox(
         results.append(result)
         if processed is not None and result.status in ("imported", "duplicate"):
             _move_processed(path, processed, result.file_hash)
+        elif processed is not None and result.status == "error":
+            _quarantine(path, Path(inbox) / "failed")
     return results

@@ -148,10 +148,13 @@ Only the `personal-assistant` grant sees these tools; `interactive-default` does
    sudo chown -R 10001:10001 /data/lab/lab-data-store/files/bank
    ```
    Drop statements (CSV or OFX) into `inbox` with `scp`; the next run (at most 15 minutes)
-   imports them.
+   imports them. A statement that cannot be imported is moved to `inbox/failed/` (the job
+   logs a warning and exits non-zero once); fix the CSV mapping, then move the file back into
+   `inbox`.
 7. **Manifests.** Copy `base/` to `lab-gitops/apps/private-data-layer/`, commit, push.
    `bank-mcp` and `email-mcp` stay in `CreateContainerConfigError` until `lab-data-store` and
-   the new `gateway-secrets` keys exist; the CronJobs until `bank-rules`, `email-sync-config`
+   the new `gateway-secrets` keys exist (the gateway Deployment also blocks until the
+   `BANK_MCP_SECRET` and `EMAIL_MCP_SECRET` keys are in `gateway-secrets`); the CronJobs until `bank-rules`, `email-sync-config`
    and `email-imap` exist.
 8. **Watch a job.** Run one now instead of waiting for the schedule and read its log:
    ```bash

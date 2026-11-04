@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable, Mapping
 
 import psycopg
 import uvicorn
@@ -13,6 +12,7 @@ from pdl_bank.memory_store import MemoryStore
 from pdl_bank.middleware import SharedSecretMiddleware
 from pdl_bank.server import build_server
 from pdl_bank.store import Store, StoreConfigError
+from pdl_bank.store_factory import store_from_env
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
@@ -23,12 +23,6 @@ def _error(message: str) -> int:
     return 1
 
 
-def _load_store_factory() -> Callable[[Mapping[str, str]], Store]:
-    from pdl_bank.store_factory import store_from_env  # type: ignore[import-not-found]
-
-    return store_from_env  # type: ignore[no-any-return]
-
-
 def _open_store() -> Store | None:
     kind = os.environ.get("BANK_STORE", "").strip().lower() or "postgres"
     if kind == "memory":
@@ -37,14 +31,7 @@ def _open_store() -> Store | None:
         _error(f"BANK_STORE must be 'memory' or 'postgres', got {kind!r}")
         return None
     try:
-        factory = _load_store_factory()
-    except ModuleNotFoundError as exc:
-        if exc.name != "pdl_bank.store_factory":
-            raise
-        _error("Postgres store not available yet; set BANK_STORE=memory")
-        return None
-    try:
-        return factory(os.environ)
+        return store_from_env(os.environ)
     except (StoreConfigError, psycopg.Error) as exc:
         _error(f"cannot open store: {exc}")
         return None

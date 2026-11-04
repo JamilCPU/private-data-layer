@@ -62,7 +62,9 @@ The importer job applies the migrations on every run (`BANK_APPLY_MIGRATIONS=1`)
 It scans `DIR` for statement files, parses them, categorizes each row with the rules file and
 stores the new ones. `--processed DIR` receives files after import, `--once` scans once and
 exits (default), `--interval N` rescans every N seconds, `--memory` is a dry run against an
-in-memory store. See `rules.example.yaml` and `csv-mappings.example.yaml`.
+in-memory store. A file that fails to import (when `--processed` is set) is moved to
+`DIR/failed/` so the next run does not trip over it again; the run still exits 1. Inspect the
+file, fix the mapping or rules, and move it back into `DIR` to retry. See `rules.example.yaml` and `csv-mappings.example.yaml`.
 
 Supported formats: CSV (column layout described in the mappings file) and OFX/QFX.
 

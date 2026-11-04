@@ -130,12 +130,56 @@ def test_processed_move_and_collision_suffix(tmp_path: Path) -> None:
     assert suffixed.startswith("sample.") and suffixed.endswith(".csv") and len(suffixed) == 19
 
 
-def test_error_file_not_moved(tmp_path: Path) -> None:
+def test_error_file_is_quarantined_and_not_retried(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     inbox, processed = tmp_path / "in", tmp_path / "out"
     inbox.mkdir()
     (inbox / "bad.csv").write_text("zzz\n")
-    import_inbox(inbox, MemoryStore(), MAPPINGS, RULES, processed=processed)
-    assert (inbox / "bad.csv").exists()
+    with caplog.at_level(logging.WARNING):
+        results = import_inbox(inbox, MemoryStore(), MAPPINGS, RULES, processed=processed)
+    assert [(r.file, r.status) for r in results] == [("bad.csv", "error")]
+    assert not (inbox / "bad.csv").exists()
+    assert (inbox / "failed" / "bad.csv").read_text() == "zzz\n"
+    assert any("quarantined bad.csv" in r.message for r in caplog.records)
+    assert import_inbox(inbox, MemoryStore(), MAPPINGS, RULES, processed=processed) == []
+
+
+def test_quarantine_collision_gets_hash_suffix(tmp_path: Path) -> None:
+    inbox, processed = tmp_path / "in", tmp_path / "out"
+    inbox.mkdir()
+    for content in ("zzz\n", "yyy\n"):
+        (inbox / "bad.csv").write_text(content)
+        import_inbox(inbox, MemoryStore(), MAPPINGS, RULES, processed=processed)
+    names = sorted(p.name for p in (inbox / "failed").iterdir())
+    assert len(names) == 2 and "bad.csv" in names
+    other = next(n for n in names if n != "bad.csv")
+    assert other.startswith("bad.") and other.endswith(".csv") and len(other) == 16
+
+
+def test_error_file_stays_without_processed_dir(tmp_path: Path) -> None:
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    (inbox / "bad.csv").write_text("zzz\n")
+    import_inbox(inbox, MemoryStore(), MAPPINGS, RULES, processed=None)
+    assert (inbox / "bad.csv").exists() and not (inbox / "failed").exists()
+
+
+def test_quarantine_failure_is_logged_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    inbox = tmp_path / "in"
+    inbox.mkdir()
+    (inbox / "bad.csv").write_text("zzz\n")
+
+    def boom(src: str, dst: str) -> None:
+        raise OSError("read-only")
+
+    monkeypatch.setattr(importer.shutil, "move", boom)
+    with caplog.at_level(logging.WARNING):
+        results = import_inbox(inbox, MemoryStore(), MAPPINGS, RULES, processed=tmp_path / "out")
+    assert results[0].status == "error"
+    assert any("could not quarantine" in r.message for r in caplog.records)
 
 
 def _cli_args(inbox: Path, *extra: str) -> list[str]:
@@ -179,20 +223,9 @@ def test_cli_bad_rules_exits_2(tmp_path: Path) -> None:
     assert cli_import.main(args) == 2
 
 
-def test_cli_without_memory_exits_2_when_factory_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    def boom() -> object:
-        raise ModuleNotFoundError("no store_factory", name="pdl_bank.store_factory")
-
-    monkeypatch.setattr(cli_import, "_load_store_factory", boom)
-    assert cli_import.main(_cli_args(tmp_path)) == 2
-    assert "use --memory" in capsys.readouterr().err
-
-
 def test_cli_without_memory_uses_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = MemoryStore()
-    monkeypatch.setattr(cli_import, "_load_store_factory", lambda: lambda env: store)
+    monkeypatch.setattr(cli_import, "store_from_env", lambda env: store)
     _copy("sample.csv", tmp_path / "in")
     assert cli_import.main(_cli_args(tmp_path / "in")) == 0
     assert len(store.accounts()) == 1
@@ -219,17 +252,6 @@ def test_cli_rejects_nonpositive_interval(tmp_path: Path) -> None:
     assert exc.value.code == 2
 
 
-def test_cli_other_missing_module_propagates(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def boom() -> object:
-        raise ModuleNotFoundError("no psycopg", name="psycopg")
-
-    monkeypatch.setattr(cli_import, "_load_store_factory", boom)
-    with pytest.raises(ModuleNotFoundError):
-        cli_import.main(_cli_args(tmp_path))
-
-
 @pytest.mark.parametrize(
     "error", [StoreConfigError("PGUSER is required"), psycopg.OperationalError("down")]
 )
@@ -242,7 +264,7 @@ def test_cli_store_startup_errors_exit_2(
     def factory(env: object) -> object:
         raise error
 
-    monkeypatch.setattr(cli_import, "_load_store_factory", lambda: factory)
+    monkeypatch.setattr(cli_import, "store_from_env", factory)
     assert cli_import.main(_cli_args(tmp_path)) == 2
     assert str(error) in capsys.readouterr().err
 
@@ -253,7 +275,7 @@ def test_cli_prints_results_only_in_memory_mode(
     capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setattr(cli_import, "_load_store_factory", lambda: lambda env: MemoryStore())
+    monkeypatch.setattr(cli_import, "store_from_env", lambda env: MemoryStore())
     _copy("sample.csv", tmp_path / "in")
     with caplog.at_level(logging.INFO):
         assert cli_import.main(_cli_args(tmp_path / "in")) == 0

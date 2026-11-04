@@ -132,3 +132,14 @@ async def test_owned_client_is_closed() -> None:
     await client.aclose()
     with pytest.raises(GatewayUnavailable):
         await client.token()
+
+
+def test_text_blocks_are_joined_with_newlines() -> None:
+    from mcp.types import CallToolResult, TextContent
+
+    from pdl_assistant.gateway_client import _tool_result
+
+    result = CallToolResult(
+        content=[TextContent(type="text", text="first"), TextContent(type="text", text="second")]
+    )
+    assert _tool_result(result) == ToolResult(text="first\nsecond", is_error=False, structured=None)

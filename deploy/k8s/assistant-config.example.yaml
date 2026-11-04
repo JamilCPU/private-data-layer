@@ -1,0 +1,10 @@
+# Shape of the out-of-band ConfigMap. The Ollama address is a workstation address, so a
+# filled-in copy is never committed; create it with kubectl (see README.md, "Assistant").
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: assistant-config
+  namespace: lab
+data:
+  ASSISTANT_OLLAMA_URL: http://REPLACE-workstation-address:11434
+  ASSISTANT_MODEL: qwen3.5:27b

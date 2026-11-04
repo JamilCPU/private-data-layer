@@ -1,0 +1,16 @@
+# Copy to assistant.yaml. Any field can be overridden by an ASSISTANT_<FIELD> env var.
+gateway_url: https://gateway.example
+ollama_url: http://ollama.example:11434
+model: qwen3.5:27b
+client_id: personal-assistant
+client_secret_file: /run/secrets/assistant-client-secret
+secrets_file: /run/secrets/assistant-secrets.yaml
+db_path: /data/assistant.db
+public_url: https://assistant.example
+listen_host: 0.0.0.0
+listen_port: 8790
+max_tool_steps: 6
+model_timeout_s: 120
+tool_timeout_s: 60
+session_ttl_s: 43200
+system_prompt_extra: ""

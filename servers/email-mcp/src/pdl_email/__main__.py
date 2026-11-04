@@ -1,0 +1,66 @@
+"""Entry point: serve the email MCP server over streamable HTTP behind the shared secret."""
+
+from __future__ import annotations
+
+import os
+import sys
+from collections.abc import Callable, Mapping
+
+import uvicorn
+
+from pdl_email.memory_store import MemoryStore
+from pdl_email.middleware import SharedSecretMiddleware
+from pdl_email.server import build_server
+from pdl_email.store import Store
+
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8000
+
+
+def _error(message: str) -> int:
+    print(f"email-mcp: {message}", file=sys.stderr)
+    return 1
+
+
+def _load_store_factory() -> Callable[[Mapping[str, str]], Store]:
+    from pdl_email.store_factory import store_from_env  # type: ignore[import-not-found]
+
+    return store_from_env  # type: ignore[no-any-return]
+
+
+def _open_store() -> Store | None:
+    kind = os.environ.get("EMAIL_STORE", "").strip().lower() or "postgres"
+    if kind == "memory":
+        return MemoryStore()
+    if kind != "postgres":
+        _error("EMAIL_STORE must be memory or postgres")
+        return None
+    try:
+        factory = _load_store_factory()
+    except ImportError:
+        _error("Postgres store not available yet; set EMAIL_STORE=memory")
+        return None
+    return factory(os.environ)
+
+
+def main(argv: list[str] | None = None) -> int:
+    del argv  # configuration comes from the environment only
+    secret = os.environ.get("EMAIL_MCP_SHARED_SECRET", "").strip()
+    if not secret:
+        return _error("environment variable EMAIL_MCP_SHARED_SECRET is required")
+    host = os.environ.get("EMAIL_MCP_HOST", "").strip() or DEFAULT_HOST
+    raw_port = os.environ.get("EMAIL_MCP_PORT", "").strip() or str(DEFAULT_PORT)
+    try:
+        port = int(raw_port)
+    except ValueError:
+        return _error(f"EMAIL_MCP_PORT must be an integer, got {raw_port!r}")
+    store = _open_store()
+    if store is None:
+        return 1
+    server = build_server(store, host=host, port=port)
+    uvicorn.run(SharedSecretMiddleware(server.streamable_http_app(), secret), host=host, port=port)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

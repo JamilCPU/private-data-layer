@@ -16,7 +16,9 @@ Today's date is {today}.
 {extra}"""
 
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]")
-_FRAME_CLOSE = re.compile(r"<(/tool_result)", re.IGNORECASE)
+_FRAME_CLOSE = re.compile(r"<(\s*/\s*tool_result)", re.IGNORECASE)
+MAX_TOOL_RESULT_CHARS = 12000
+TRUNCATED_MARK = "\n[truncated]"
 
 
 def render_system_prompt(today: date, extra: str = "") -> str:
@@ -32,7 +34,10 @@ def safe_tool_name(name: str) -> str:
     return _UNSAFE_NAME.sub("_", name)
 
 
-def frame_tool_result(name: str, text: str) -> str:
-    """``text`` wrapped in a ``<tool_result>`` block that the text itself cannot close."""
+def frame_tool_result(name: str, text: str, *, error: bool = False) -> str:
+    """``text`` (at most ``MAX_TOOL_RESULT_CHARS``) in a ``<tool_result>`` block it cannot close."""
+    if len(text) > MAX_TOOL_RESULT_CHARS:
+        text = text[:MAX_TOOL_RESULT_CHARS] + TRUNCATED_MARK
     escaped = _FRAME_CLOSE.sub(r"&lt;\1", text)
-    return f'<tool_result name="{safe_tool_name(name)}">\n{escaped}\n</tool_result>'
+    flag = ' error="true"' if error else ""
+    return f'<tool_result name="{safe_tool_name(name)}"{flag}>\n{escaped}\n</tool_result>'

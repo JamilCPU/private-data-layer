@@ -106,6 +106,23 @@ class MemoryStore:
         )
         return [StoredMessage(**dict(row)) for row in reversed(rows)]
 
+    def recent_turns(
+        self, conversation_id: int, limit: int, skip_assistant: tuple[str, ...] = ()
+    ) -> list[StoredMessage]:
+        """The last ``limit`` user and final assistant texts, oldest first.
+
+        Rows with a ``tool_name`` (tool results, tool-call records) are left out, as are
+        assistant rows whose content is one of ``skip_assistant``.
+        """
+        marks = ", ".join("?" * len(skip_assistant))
+        rows = self._read(
+            "SELECT * FROM messages WHERE conversation_id = ? AND tool_name IS NULL"
+            f" AND (role = 'user' OR (role = 'assistant' AND content NOT IN ({marks})))"
+            " ORDER BY id DESC LIMIT ?",
+            (conversation_id, *skip_assistant, limit),
+        )
+        return [StoredMessage(**dict(row)) for row in reversed(rows)]
+
     def list_conversations(self, limit: int = 50) -> list[Conversation]:
         """Return conversations, newest first."""
         rows = self._read("SELECT * FROM conversations ORDER BY id DESC LIMIT ?", (limit,))

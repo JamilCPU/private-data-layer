@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 import respx
@@ -209,3 +211,104 @@ async def test_cookies_not_persisted(http):
     await _fetch(http, "https://example.com/a")
     await _fetch(http, "https://example.com/b")
     assert "cookie" not in route.calls.last.request.headers
+
+
+@respx.mock
+async def test_cookie_set_on_hop_one_not_sent_on_hop_two(http):
+    respx.get("https://example.com/a").respond(
+        302, headers={"location": "/b", "set-cookie": "sid=x; Path=/"}
+    )
+    second = respx.get("https://example.com/b").respond(200, text="ok", headers=TEXT_HEADERS)
+    await _fetch(http, "https://example.com/a")
+    assert "cookie" not in second.calls.last.request.headers
+
+
+@respx.mock
+async def test_preexisting_client_cookies_are_not_sent(http):
+    http.cookies.set("sid", "mine", domain="example.com")
+    route = respx.get("https://example.com/p").respond(200, text="ok", headers=TEXT_HEADERS)
+    await _fetch(http)
+    assert "cookie" not in route.calls.last.request.headers
+
+
+@respx.mock
+async def test_second_hop_carries_fixed_headers(http):
+    respx.get("https://example.com/a").respond(302, headers={"location": "/b"})
+    second = respx.get("https://example.com/b").respond(200, text="ok", headers=TEXT_HEADERS)
+    await _fetch(http, "https://example.com/a")
+    headers = second.calls.last.request.headers
+    assert headers["user-agent"] == USER_AGENT
+    assert "text/html" in headers["accept"]
+
+
+@respx.mock
+async def test_exactly_five_redirects_succeed(http):
+    for n in range(5):
+        respx.get(f"https://example.com/{n}").respond(302, headers={"location": f"/{n + 1}"})
+    respx.get("https://example.com/5").respond(200, text="end", headers=TEXT_HEADERS)
+    page = await _fetch(http, "https://example.com/0", max_redirects=5)
+    assert page.final_url == "https://example.com/5"
+
+
+@respx.mock
+async def test_sixth_redirect_refused(http):
+    for n in range(6):
+        respx.get(f"https://example.com/{n}").respond(302, headers={"location": f"/{n + 1}"})
+    final = respx.get("https://example.com/6").respond(200, text="end", headers=TEXT_HEADERS)
+    with pytest.raises(FetchError, match="too many redirects"):
+        await _fetch(http, "https://example.com/0", max_redirects=5)
+    assert final.called is False
+
+
+@respx.mock
+async def test_overall_deadline(http):
+    async def slow(_request):
+        await asyncio.sleep(1)
+        return httpx.Response(200, text="late", headers=TEXT_HEADERS)
+
+    respx.get("https://example.com/p").mock(side_effect=slow)
+    with pytest.raises(FetchError, match="timed out"):
+        await _fetch(http, timeout_s=0.05)
+
+
+async def test_timeout_applied_to_each_request(http):
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.extensions["timeout"])
+        return httpx.Response(200, text="ok", headers=TEXT_HEADERS)
+
+    with respx.mock:
+        respx.get("https://example.com/p").mock(side_effect=handler)
+        await _fetch(http, timeout_s=7.0)
+    assert seen == [{"connect": 7.0, "read": 7.0, "write": 7.0, "pool": 7.0}]
+
+
+async def test_invalid_url_is_refused(http):
+    with pytest.raises(UrlRefused, match="invalid url"):
+        await _fetch(http, "http://exa\tmple.com/")
+
+
+@respx.mock
+async def test_redirect_to_whitespace_host_is_refused(http):
+    respx.get("https://example.com/a").respond(302, headers={"location": "http://a b.com/"})
+    with pytest.raises(UrlRefused):
+        await _fetch(http, "https://example.com/a")
+
+
+@respx.mock
+async def test_idna_error_becomes_url_refused(http):
+    def bad(_host: str) -> list[str]:
+        raise UnicodeError("label too long")
+
+    with pytest.raises(UrlRefused, match="cannot resolve"):
+        await fetch_page("https://example.com/", http=http, resolve=bad)
+
+
+async def test_httpx_invalid_url_backstop(http, monkeypatch):
+    def boom(*_a, **_k):
+        raise httpx.InvalidURL("bad")
+
+    monkeypatch.setattr(http, "build_request", boom)
+    with pytest.raises(UrlRefused, match="invalid url"):
+        await _fetch(http)

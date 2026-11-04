@@ -1,0 +1,51 @@
+# Metasearch backend for search-mcp. Cluster-internal only (ClusterIP + NetworkPolicy); it holds
+# no data, so there is no volume besides the settings file.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: searxng
+  labels: {app: searxng}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: searxng}
+  template:
+    metadata:
+      labels: {app: searxng}
+    spec:
+      nodeSelector:
+        role: primary-worker
+      enableServiceLinks: false
+      containers:
+        - name: searxng
+          image: docker.io/searxng/searxng:2026.11.2-cccbc9e15
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - name: SEARXNG_SECRET
+              valueFrom: {secretKeyRef: {name: searxng, key: secret_key}}
+            - {name: SEARXNG_BASE_URL, value: "http://searxng:8080/"}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          # The image writes /etc/searxng/uwsgi.ini at start when it is missing and drops
+          # privileges itself, so: settings.yml is mounted by subPath over the writable image
+          # filesystem (readOnlyRootFilesystem stays false) and no user is forced. Privilege
+          # escalation is blocked and capabilities are dropped; if the image's entrypoint needs
+          # one back (for its privilege drop), add only that capability.
+          securityContext:
+            allowPrivilegeEscalation: false
+            seccompProfile: {type: RuntimeDefault}
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: settings, mountPath: /etc/searxng/settings.yml, subPath: settings.yml, readOnly: true}
+      volumes:
+        - name: settings
+          configMap: {name: searxng-settings}

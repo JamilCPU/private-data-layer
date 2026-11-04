@@ -280,6 +280,7 @@ def _env() -> dict[str, str]:
         "AUTOMATIONS_MCP_TOKEN": "auto-token",
         "BANK_MCP_SECRET": "bank-secret",
         "EMAIL_MCP_SECRET": "email-secret",
+        "SEARCH_MCP_SECRET": "search-secret",
     }
 
 
@@ -296,8 +297,8 @@ def test_build_backends_headers(config: GatewayConfig, monkeypatch: pytest.Monke
 
     built = build_backends(_with_automations(config, ca_file=certifi.where()), os.environ)
 
-    assert [b.name for b in built] == ["homestudio", "automations", "bank", "email"]
-    homestudio, automations, bank, email = built
+    assert [b.name for b in built] == ["homestudio", "automations", "bank", "email", "search"]
+    homestudio, automations, bank, email, search = built
     assert isinstance(homestudio, RemoteBackend)
     assert isinstance(automations, RemoteBackend)
     assert dict(homestudio.headers) == {"X-Gateway-Secret": "hs-secret"}
@@ -309,6 +310,8 @@ def test_build_backends_headers(config: GatewayConfig, monkeypatch: pytest.Monke
     assert dict(bank.headers) == {"X-Gateway-Secret": "bank-secret"}
     assert dict(email.headers) == {"X-Gateway-Secret": "email-secret"}
     assert (bank.scope, email.scope) == ("bank:read", "email:read")
+    assert dict(search.headers) == {"X-Gateway-Secret": "search-secret"}
+    assert search.scope == "search:read"
 
 
 def test_build_backends_missing_env_is_config_error(

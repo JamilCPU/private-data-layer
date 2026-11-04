@@ -1,0 +1,18 @@
+# ntfy.lab on :443; cert-manager issues the certificate from the lab CA into `ntfy-lab-tls`.
+# The phone app needs the lab CA installed (http:// to the Service is the documented fallback).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ntfy
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: lab-ca
+spec:
+  tls:
+    - hosts: [ntfy.lab]
+      secretName: ntfy-lab-tls
+  rules:
+    - host: ntfy.lab
+      http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: ntfy, port: {name: http}}}}

@@ -35,12 +35,14 @@ spec:
           resources:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {memory: 512Mi}
-          # The image writes /etc/searxng/uwsgi.ini at start when it is missing and drops
-          # privileges itself, so: settings.yml is mounted by subPath over the writable image
-          # filesystem (readOnlyRootFilesystem stays false) and no user is forced. Privilege
-          # escalation is blocked and capabilities are dropped; if the image's entrypoint needs
-          # one back (for its privilege drop), add only that capability.
+          # The image starts as root and drops privileges in its entrypoint, which cannot work with
+          # every capability dropped, so the pod runs as the image's own searxng user (977)
+          # instead. That user can write /etc/searxng/uwsgi.ini, so the root filesystem stays
+          # writable; settings.yml is mounted by subPath over it.
           securityContext:
+            runAsUser: 977
+            runAsGroup: 977
+            runAsNonRoot: true
             allowPrivilegeEscalation: false
             seccompProfile: {type: RuntimeDefault}
             capabilities: {drop: ["ALL"]}

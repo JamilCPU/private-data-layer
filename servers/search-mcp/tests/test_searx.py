@@ -57,6 +57,15 @@ async def test_search_maps_results(client: SearxClient):
 
 
 @respx.mock
+async def test_search_caps_title(client: SearxClient):
+    respx.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json={"results": [_result(1, title="t" * 500)]})
+    )
+    hits = await client.search("q")
+    assert len(hits[0].title) == 200
+
+
+@respx.mock
 async def test_search_without_recency_omits_time_range(client: SearxClient):
     route = respx.get(SEARCH_URL).mock(return_value=httpx.Response(200, json={"results": []}))
     assert await client.search("q") == []

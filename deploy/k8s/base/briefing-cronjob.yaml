@@ -17,7 +17,7 @@ metadata:
   labels: {app: briefing}
 spec:
   schedule: "30 7 * * *"
-  timeZone: America/Chicago
+  timeZone: America/Chicago   # keep equal to ASSISTANT_BRIEFING_TIMEZONE in briefing-config
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3

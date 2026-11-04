@@ -1,4 +1,4 @@
-# Local development stack: gateway + homestudio-mcp + a fixture Home Studio stub.
+# Local development stack: gateway + homestudio-mcp + a fixture Home Studio stub + assistant.
 # Create gateway secrets and .env first; see README.md.
 services:
   gateway:
@@ -54,5 +54,40 @@ services:
       retries: 5
       start_period: 5s
 
+  assistant:
+    build: ../../assistant
+    ports:
+      - "8790:8790"
+    environment:
+      # API calls go to the compose gateway by service name. The browser login is redirected to
+      # that same address, so see README.md for the one-line hosts entry.
+      ASSISTANT_GATEWAY_URL: http://gateway:8787
+      ASSISTANT_PUBLIC_URL: http://localhost:8790
+      ASSISTANT_OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-qwen3.5:27b}
+      ASSISTANT_DB_PATH: /data/assistant.db
+      ASSISTANT_SECRETS_FILE: /etc/pdl/assistant-secrets.yaml
+      ASSISTANT_CLIENT_SECRET_FILE: /run/secrets/pa.secret
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./assistant-secrets.dev.yaml:/etc/pdl/assistant-secrets.yaml:ro
+      - ./pa.secret:/run/secrets/pa.secret:ro
+      - assistant-data:/data
+    depends_on:
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8790/healthz", timeout=4)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   gateway-data:
+  assistant-data:

@@ -27,11 +27,12 @@ spec:
     matchLabels: {app: search-mcp}
   policyTypes: [Egress]
   egress:
+    # DNS: the k3s policy controller did not match kube-dns through a cross-namespace pod selector
+    # (resolution failed), so the rule names the cluster DNS Service address and the pod range
+    # instead (k3s defaults: service CIDR 10.43.0.0/16, pod CIDR 10.42.0.0/16).
     - to:
-        - namespaceSelector:
-            matchLabels: {kubernetes.io/metadata.name: kube-system}
-          podSelector:
-            matchLabels: {k8s-app: kube-dns}
+        - ipBlock: {cidr: 10.43.0.10/32}
+        - ipBlock: {cidr: 10.42.0.0/16}
       ports:
         - {protocol: UDP, port: 53}
         - {protocol: TCP, port: 53}

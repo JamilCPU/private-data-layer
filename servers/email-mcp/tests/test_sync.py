@@ -26,20 +26,24 @@ class FakeSource:
         self.uidvalidity = uidvalidity
         self.uidnext = uidnext if uidnext is not None else max(self.uids, default=0) + 1
         self.fail_after = fail_after
+        self.open_error: Exception | None = None
         self.closed = 0
         self.since_calls: list[date] = []
         self.fetch_calls: list[int] = []
 
     def open(self):
+        if self.open_error is not None:
+            raise self.open_error
         return self.uidvalidity, self.uidnext
 
     def search_since(self, since):
         self.since_calls.append(since)
         return self.uids[0] if self.uids else self.uidnext
 
-    def fetch_since(self, uid_from):
+    def fetch_since(self, uid_from, *, limit=500):
         self.fetch_calls.append(uid_from)
-        for n, uid in enumerate(u for u in self.uids if u >= uid_from):
+        wanted = [u for u in self.uids if u >= uid_from][:limit]
+        for n, uid in enumerate(wanted):
             if self.fail_after is not None and n >= self.fail_after:
                 raise OSError("connection dropped")
             yield replace(make(uid), uidvalidity=self.uidvalidity)
@@ -112,3 +116,42 @@ def test_real_imap_source_over_fake_imap():
     assert result == SyncResult(1, 1, False)
     assert store.sync_state("INBOX") == SyncState(777, 10)
     assert ("logout",) in fake.calls
+
+
+def test_backlog_larger_than_fetch_limit_is_drained():
+    store, src = MemoryStore(), FakeSource(range(1, 1201))
+    result = run(src, store, batch_size=100, fetch_limit=500)
+    assert result == SyncResult(1200, 1200, False)
+    assert src.fetch_calls == [1, 501, 1001]
+    assert store.sync_state("INBOX") == SyncState(1, 1200)
+
+
+def test_exact_multiple_of_limit_ends_with_empty_call():
+    store, src = MemoryStore(), FakeSource(range(1, 11))
+    assert run(src, store, batch_size=5, fetch_limit=5).fetched == 10
+    assert src.fetch_calls == [1, 6, 11]
+
+
+def test_second_chunk_store_failure_keeps_first_chunk_state():
+    class Flaky(MemoryStore):
+        calls = 0
+
+        def upsert_messages(self, msgs):
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("db down")
+            return super().upsert_messages(msgs)
+
+    store, src = Flaky(), FakeSource([1, 2, 3, 4, 5])
+    with pytest.raises(RuntimeError):
+        run(src, store, batch_size=2)
+    assert store.sync_state("INBOX") == SyncState(1, 2)
+    assert src.closed == 1
+
+
+def test_close_runs_when_open_raises():
+    src = FakeSource([1])
+    src.open_error = OSError("refused")
+    with pytest.raises(OSError):
+        run(src, MemoryStore())
+    assert src.closed == 1

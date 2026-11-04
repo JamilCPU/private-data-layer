@@ -10,6 +10,10 @@ from typing import Protocol
 from pdl_email.models import Message
 
 
+class StoreConfigError(ValueError):
+    """The store cannot be built from the environment (missing or invalid setting)."""
+
+
 @dataclass(frozen=True)
 class SyncState:
     uidvalidity: int

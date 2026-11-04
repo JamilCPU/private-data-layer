@@ -9,21 +9,39 @@ import os
 import sys
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import psycopg
+
 from pdl_email.imap_source import ImapSource
 from pdl_email.memory_store import MemoryStore
-from pdl_email.store import Store
+from pdl_email.store import Store, StoreConfigError
 from pdl_email.sync import sync_once
 
 log = logging.getLogger("pdl_email.sync")
 
 EXIT_FAILED = 1
 EXIT_USAGE = 2
+EXIT_INTERRUPTED = 130
+
+# Failures of one interval run that are retried on the next tick: network and IMAP protocol
+# errors, malformed IMAP responses (RuntimeError from ImapSource) and database errors.
+_RETRYABLE = (OSError, imaplib.IMAP4.error, RuntimeError, psycopg.Error)
 
 # Tests substitute this to avoid real network access.
 source_factory: Callable[..., Any] = ImapSource
+
+
+@dataclass(frozen=True)
+class Config:
+    host: str
+    user: str
+    password: str
+    mailbox: str
+    port: int
+    initial_days: int
 
 
 def _positive_int(value: str) -> int:
@@ -42,9 +60,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _load_store_factory() -> Callable[[Mapping[str, str]], Store]:
-    from pdl_email.store_factory import store_from_env  # type: ignore[import-not-found]
+    from pdl_email.store_factory import store_from_env
 
-    return store_from_env  # type: ignore[no-any-return]
+    return store_from_env
 
 
 def _open_store() -> Store | None:
@@ -55,51 +73,42 @@ def _open_store() -> Store | None:
     except ModuleNotFoundError as exc:
         if exc.name != "pdl_email.store_factory":
             raise
-        print("Postgres store not available yet; set EMAIL_STORE=memory", file=sys.stderr)
+        log.error("Postgres store not available yet; set EMAIL_STORE=memory")
         return None
-    return factory(os.environ)
+    try:
+        return factory(os.environ)
+    except StoreConfigError as exc:
+        log.error("store configuration error: %s", exc)
+    except psycopg.Error as exc:
+        log.error("cannot open the store: %s", exc)
+    return None
 
 
 def _read_password(path: str) -> str | None:
     try:
-        return Path(path).read_text(encoding="utf-8").rstrip("\r\n")
-    except OSError as exc:
-        print(f"cannot read EMAIL_IMAP_PASSWORD_FILE: {exc}", file=sys.stderr)
+        password = Path(path).read_text(encoding="utf-8").rstrip("\r\n")
+    except (OSError, UnicodeDecodeError) as exc:
+        log.error("cannot read EMAIL_IMAP_PASSWORD_FILE: %s", exc)
         return None
+    if not password:
+        log.error("EMAIL_IMAP_PASSWORD_FILE is empty")
+        return None
+    return password
 
 
-def _run_once(host: str, user: str, password: str, store: Store) -> None:
-    mailbox = os.environ.get("EMAIL_MAILBOX", "INBOX")
-    source = source_factory(
-        host, user, password, mailbox=mailbox, port=int(os.environ.get("EMAIL_IMAP_PORT", "993"))
-    )
-    result = sync_once(
-        source,
-        store,
-        mailbox=mailbox,
-        initial_days=int(os.environ.get("EMAIL_INITIAL_DAYS", "90")),
-    )
-    log.info("sync result: %s", result)
-
-
-def _loop(host: str, user: str, password: str, store: Store, interval: int) -> int:
+def _int_env(name: str, default: int) -> int | None:
+    raw = os.environ.get(name, str(default))
     try:
-        while True:
-            try:
-                _run_once(host, user, password, store)
-            except (OSError, imaplib.IMAP4.error):
-                log.exception("sync run failed; will retry")
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        log.info("interrupted; stopping")
-        return 0
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        log.error("%s must be a positive integer, got %r", name, raw)
+        return None
+    return value
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+def _load_config() -> Config | None:
     env = os.environ
     host, user, pw_file = (
         env.get("EMAIL_IMAP_HOST"),
@@ -107,25 +116,60 @@ def main(argv: list[str] | None = None) -> int:
         env.get("EMAIL_IMAP_PASSWORD_FILE"),
     )
     if not (host and user and pw_file):
-        print(
-            "EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASSWORD_FILE are required",
-            file=sys.stderr,
-        )
-        return EXIT_USAGE
+        log.error("EMAIL_IMAP_HOST, EMAIL_IMAP_USER and EMAIL_IMAP_PASSWORD_FILE are required")
+        return None
+    port, days = _int_env("EMAIL_IMAP_PORT", 993), _int_env("EMAIL_INITIAL_DAYS", 90)
     password = _read_password(pw_file)
-    if password is None:
+    if port is None or days is None or password is None:
+        return None
+    return Config(host, user, password, env.get("EMAIL_MAILBOX", "INBOX"), port, days)
+
+
+def _run_once(cfg: Config, store: Store) -> None:
+    source = source_factory(cfg.host, cfg.user, cfg.password, mailbox=cfg.mailbox, port=cfg.port)
+    result = sync_once(source, store, mailbox=cfg.mailbox, initial_days=cfg.initial_days)
+    log.info("sync result: %s", result)
+
+
+def _loop(cfg: Config, store: Store, interval: int) -> int:
+    try:
+        while True:
+            try:
+                _run_once(cfg, store)
+            except _RETRYABLE:
+                log.warning("sync run failed; will retry", exc_info=True)
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        log.info("interrupted; stopping")
+        return 0
+
+
+def _once(cfg: Config, store: Store) -> int:
+    try:
+        _run_once(cfg, store)
+    except KeyboardInterrupt:
+        log.info("interrupted")
+        return EXIT_INTERRUPTED
+    except Exception:
+        log.exception("sync failed")
+        return EXIT_FAILED
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+    cfg = _load_config()
+    if cfg is None:
         return EXIT_USAGE
     store = _open_store()
     if store is None:
         return EXIT_USAGE
     if args.interval is not None:
-        return _loop(host, user, password, store, args.interval)
-    try:
-        _run_once(host, user, password, store)
-    except Exception:
-        log.exception("sync failed")
-        return EXIT_FAILED
-    return 0
+        return _loop(cfg, store, args.interval)
+    return _once(cfg, store)
 
 
 if __name__ == "__main__":

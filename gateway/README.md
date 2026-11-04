@@ -13,3 +13,5 @@ Issued tokens follow the current config: a token's scopes are cut down to what i
 The gateway is read-only in v1. A backend tool whose own annotations say `readOnlyHint: false` or `destructiveHint: true` is hidden and answers `unknown tool`; unannotated tools are exposed and marked read-only.
 
 Accepted trade-off: `POST /approve` is throttled for the whole process. After 5 wrong passphrases in 10 minutes, every approval attempt is refused with `429` for 10 minutes. This deliberately ignores which request or client sent the guesses. As a result, anyone who can reach the gateway on the network can lock you out of approvals for 10 minutes. In exchange, nobody can brute-force the passphrase by opening new approval requests. Wrong client secrets on `/token` (`client_credentials`) have their own lock with the same rule: 5 failures in 10 minutes refuse every `client_credentials` request with `429` for 10 minutes.
+
+Backend `url` and `ca_file` values may contain `${NAME}` placeholders that are expanded from the environment at startup (an unset name refuses to start); use this to point at a node address injected by Kubernetes rather than committing it.

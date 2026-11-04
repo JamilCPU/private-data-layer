@@ -2,15 +2,8 @@ apiVersion: v1
 kind: Service
 metadata:
   name: homestudio-mcp
-  namespace: pdl
-  labels:
-    app: homestudio-mcp
-    app.kubernetes.io/part-of: private-data-layer
+  labels: {app: homestudio-mcp}
 spec:
-  type: ClusterIP
-  selector:
-    app: homestudio-mcp
+  selector: {app: homestudio-mcp}
   ports:
-    - name: http
-      port: 8000
-      targetPort: http
+    - {name: http, port: 8000, targetPort: http}

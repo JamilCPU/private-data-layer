@@ -1,0 +1,8 @@
+# Shape of the out-of-band ConfigMap that tells homestudio-mcp where the Home Studio REST API is.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homestudio-mcp-config
+  namespace: lab
+data:
+  HOMESTUDIO_API_URL: http://<home-studio-host>:8765

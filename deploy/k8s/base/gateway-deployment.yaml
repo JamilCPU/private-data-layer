@@ -1,112 +1,74 @@
+# MCP gateway: OAuth 2.1 server + scope-filtering proxy. State (SQLite token store, JSONL audit
+# log) lives on the primary worker's data disk, so the pod is pinned there with the role label
+# every stateful lab app uses, never by node name.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: gateway
-  namespace: pdl
-  labels:
-    app: gateway
-    app.kubernetes.io/part-of: private-data-layer
+  labels: {app: gateway}
 spec:
   replicas: 1
-  # SQLite on a ReadWriteOnce volume: never run two gateways at once.
-  strategy:
-    type: Recreate
+  strategy: {type: Recreate}   # SQLite: never two gateways at once
   selector:
-    matchLabels:
-      app: gateway
+    matchLabels: {app: gateway}
   template:
     metadata:
-      labels:
-        app: gateway
-        app.kubernetes.io/part-of: private-data-layer
+      labels: {app: gateway}
     spec:
-      # The PersistentVolume lives on the primary-worker node's disk, so the pod is pinned there.
       nodeSelector:
-        kubernetes.io/hostname: primary-worker
-      # GHCR images of a private repo are private. Either push to the lab registry and set
-      # images[].newName in kustomization.yaml, or create the ghcr-pull Secret (README step 5)
-      # and uncomment:
-      # imagePullSecrets: [{name: ghcr-pull}]
+        role: primary-worker
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
-        fsGroup: 10001
-        seccompProfile:
-          type: RuntimeDefault
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # hostPath directories are created root-owned; hand them to the gateway's uid once.
+        - name: own-data
+          image: busybox:1.37
+          command: [sh, -c, "chown -R 10001:10001 /data"]
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+          volumeMounts:
+            - {name: data, mountPath: /data}
       containers:
         - name: gateway
-          image: ghcr.io/jamilcpu/pdl-gateway:latest
+          image: registry.lab/jamil/pdl-gateway:latest
+          imagePullPolicy: Always
           ports:
-            - name: http
-              containerPort: 8787
-          # Only the two backend credentials become env vars. Taking the whole Secret with
-          # envFrom would also try to import its secrets.yaml key.
+            - {name: http, containerPort: 8787}
           env:
+            # Only the backend credentials become env vars; the Secret's secrets.yaml key is a file.
             - name: HOMESTUDIO_MCP_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: gateway-secrets
-                  key: HOMESTUDIO_MCP_SECRET
+              valueFrom: {secretKeyRef: {name: gateway-secrets, key: HOMESTUDIO_MCP_SECRET}}
             - name: AUTOMATIONS_MCP_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: gateway-secrets
-                  key: AUTOMATIONS_MCP_TOKEN
+              valueFrom: {secretKeyRef: {name: gateway-secrets, key: AUTOMATIONS_MCP_TOKEN, optional: true}}
           readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 8787
+            httpGet: {path: /healthz, port: http}
             periodSeconds: 10
-            timeoutSeconds: 3
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8787
-            initialDelaySeconds: 15
-            periodSeconds: 20
-            timeoutSeconds: 3
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 30
           resources:
-            requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
-              memory: 512Mi
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
           volumeMounts:
-            - name: config
-              mountPath: /etc/pdl/gateway.yaml
-              subPath: gateway.yaml
-              readOnly: true
-            - name: secrets
-              mountPath: /etc/pdl/secrets.yaml
-              subPath: secrets.yaml
-              readOnly: true
-            - name: automations-ca
-              mountPath: /etc/pdl/automations-ca.pem
-              subPath: automations-ca.pem
-              readOnly: true
-            - name: data
-              mountPath: /data
+            - {name: config, mountPath: /etc/pdl/gateway.yaml, subPath: gateway.yaml, readOnly: true}
+            - {name: secrets, mountPath: /etc/pdl/secrets.yaml, subPath: secrets.yaml, readOnly: true}
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
       volumes:
         - name: config
-          configMap:
-            name: gateway-config
+          configMap: {name: gateway-config}
         - name: secrets
-          secret:
-            secretName: gateway-secrets
-            items:
-              - key: secrets.yaml
-                path: secrets.yaml
-            defaultMode: 288 # 0440, readable through fsGroup 10001
-        # CA that signed the Automations MCP certificate. Created by hand (README step 5);
-        # not in the kustomization because it comes from the migration, not from this repo.
-        - name: automations-ca
-          configMap:
-            name: automations-ca
+          secret: {secretName: gateway-secrets, defaultMode: 0440, items: [{key: secrets.yaml, path: secrets.yaml}]}
         - name: data
-          persistentVolumeClaim:
-            claimName: gateway-data
+          hostPath: {path: /data/lab/private-data-layer, type: DirectoryOrCreate}
+        - name: tmp
+          emptyDir: {}

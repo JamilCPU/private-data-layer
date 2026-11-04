@@ -1,75 +1,49 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: homestudio-mcp-config
-  namespace: pdl
-  labels:
-    app: homestudio-mcp
-    app.kubernetes.io/part-of: private-data-layer
-data:
-  # Home Studio server on the Pi host (outside the cluster). the Pi host's IP until Pi-hole appliance names
-  # exist; then switch to http://homestudio.pi-host.lab:8765 (placeholder name).
-  HOMESTUDIO_API_URL: http://<home-studio-host>:8765
----
+# Read-only MCP server over the Home Studio REST API (JamilCPU/home-studio-server, mcp/).
+# It runs in the cluster, not on the Pi that hosts the audio stack, and is reachable only from
+# the gateway (ClusterIP + NetworkPolicy + shared-secret header). HOMESTUDIO_API_URL comes from
+# the out-of-band ConfigMap `homestudio-mcp-config` so no host address is committed here.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: homestudio-mcp
-  namespace: pdl
-  labels:
-    app: homestudio-mcp
-    app.kubernetes.io/part-of: private-data-layer
+  labels: {app: homestudio-mcp}
 spec:
   replicas: 1
   selector:
-    matchLabels:
-      app: homestudio-mcp
+    matchLabels: {app: homestudio-mcp}
   template:
     metadata:
-      labels:
-        app: homestudio-mcp
-        app.kubernetes.io/part-of: private-data-layer
+      labels: {app: homestudio-mcp}
     spec:
-      # GHCR images of a private repo are private. Either push to the lab registry and set
-      # images[].newName in kustomization.yaml, or create the ghcr-pull Secret (README step 5)
-      # and uncomment:
-      # imagePullSecrets: [{name: ghcr-pull}]
+      nodeSelector:
+        role: primary-worker   # amd64 image
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
-        seccompProfile:
-          type: RuntimeDefault
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: homestudio-mcp
-          image: ghcr.io/jamilcpu/homestudio-mcp:latest
+          image: registry.lab/jamil/homestudio-mcp:latest
+          imagePullPolicy: Always
           ports:
-            - name: http
-              containerPort: 8000
+            - {name: http, containerPort: 8000}
+          envFrom:
+            - configMapRef: {name: homestudio-mcp-config}
           env:
-            - name: HOMESTUDIO_API_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: homestudio-mcp-config
-                  key: HOMESTUDIO_API_URL
             - name: HOMESTUDIO_MCP_SHARED_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: gateway-secrets
-                  key: HOMESTUDIO_MCP_SECRET
+              valueFrom: {secretKeyRef: {name: gateway-secrets, key: HOMESTUDIO_MCP_SECRET}}
           readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 8000
+            httpGet: {path: /healthz, port: http}
             periodSeconds: 10
-            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 30
           resources:
-            requests:
-              cpu: 25m
-              memory: 64Mi
-            limits:
-              memory: 256Mi
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
           securityContext:
             allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}

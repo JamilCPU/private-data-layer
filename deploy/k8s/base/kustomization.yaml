@@ -1,22 +1,20 @@
+# Copy this folder into lab-gitops as apps/private-data-layer/ (Flux applies main).
+# Images are built by CI (GHCR) and mirrored into the lab registry; swap newName/newTag here.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+namespace: lab
+commonLabels:
+  app.kubernetes.io/part-of: private-data-layer
 resources:
-  - namespace.yaml
   - gateway-configmap.yaml
-  - gateway-pvc.yaml
   - gateway-deployment.yaml
   - gateway-service.yaml
   - gateway-ingress.yaml
   - homestudio-mcp-deployment.yaml
   - homestudio-mcp-service.yaml
   - homestudio-mcp-networkpolicy.yaml
-# Change newName to move an image to another registry; pin newTag (for example a commit SHA) to deploy.
 images:
-  - name: ghcr.io/jamilcpu/pdl-gateway
-    newName: ghcr.io/jamilcpu/pdl-gateway
+  - name: registry.lab/jamil/pdl-gateway
     newTag: latest
-  - name: ghcr.io/jamilcpu/homestudio-mcp
-    newName: ghcr.io/jamilcpu/homestudio-mcp
+  - name: registry.lab/jamil/homestudio-mcp
     newTag: latest
-# Not listed on purpose: the gateway-secrets Secret and the automations-ca ConfigMap are
-# created by hand (see ../README.md). ../gateway-secret.example.yaml documents the Secret.

@@ -1,11 +1,9 @@
+# The gateway's public config. Secrets (passphrase hash, client secret hashes, backend
+# credentials) live in the out-of-band Secret `gateway-secrets`; see ../README.md.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: gateway-config
-  namespace: pdl
-  labels:
-    app: gateway
-    app.kubernetes.io/part-of: private-data-layer
 data:
   gateway.yaml: |
     issuer_url: https://gateway.lab
@@ -21,13 +19,15 @@ data:
         scope: homestudio:read
         secret_header: X-Gateway-Secret
         secret_env: HOMESTUDIO_MCP_SECRET
-      - name: automations
-        # Replace with the Service name the migration publishes for the Automations MCP server.
-        url: https://automations-mcp.pdl.svc:7702/mcp
-        scope: automations:read
-        bearer_env: AUTOMATIONS_MCP_TOKEN
-        ca_file: /etc/pdl/automations-ca.pem
-        allow_tools: [list_devices, get_device, list_programs, get_program, get_program_logs, get_usb_power, recent_history]
+      # Automations (pa-mcp) is enabled once its TLS trust is settled: it serves TLS with its own
+      # pinned certificate, so the gateway needs that certificate as ca_file (mounted from an
+      # out-of-band ConfigMap) and a URL whose name the certificate covers.
+      # - name: automations
+      #   url: https://mcp.automations.lab/mcp
+      #   scope: automations:read
+      #   bearer_env: AUTOMATIONS_MCP_TOKEN
+      #   ca_file: /etc/pdl/automations-ca.pem
+      #   allow_tools: [list_devices, get_device, list_programs, get_program, get_program_logs, get_usb_power, recent_history]
     grants:
       - name: personal-assistant
         kind: headless

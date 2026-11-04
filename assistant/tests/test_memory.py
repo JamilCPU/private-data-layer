@@ -113,3 +113,11 @@ def test_persists_across_reopen(tmp_path: Path):
     assert second.recent_messages(cid)[0].content == "x"
     assert second.session_valid(sid)
     second.close()
+
+
+def test_get_conversation(store: MemoryStore):
+    cid = store.new_conversation("hello")
+    found = store.get_conversation(cid)
+    assert found is not None
+    assert (found.id, found.title) == (cid, "hello")
+    assert store.get_conversation(cid + 1) is None

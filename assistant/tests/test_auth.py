@@ -57,7 +57,8 @@ def test_tampered_cookie_is_none() -> None:
     signer = SessionSigner("cookie-secret", ttl_s=60)
     cookie = signer.issue("sess-1")
     assert signer.verify("sess-2" + cookie[len("sess-1") :]) is None
-    assert signer.verify(cookie[:-1] + ("A" if cookie[-1] != "A" else "B")) is None
+    i = len(cookie) - 10  # inside the signature, away from base64 padding bits
+    assert signer.verify(cookie[:i] + ("A" if cookie[i] != "A" else "B") + cookie[i + 1 :]) is None
     assert SessionSigner("other-secret", ttl_s=60).verify(cookie) is None
     assert signer.verify("") is None
     assert signer.verify("garbage") is None

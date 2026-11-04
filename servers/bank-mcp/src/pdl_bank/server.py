@@ -116,11 +116,15 @@ def build_server(
             raise ValueError(str(exc)) from exc
         grouping: GroupBy = group_by
         rows = store.summary(resolved.since, resolved.until, grouping)
+        names = {a.id: a.name for a in store.accounts()} if group_by == "account" else {}
         return {
             "since": resolved.since.isoformat(),
             "until": resolved.until.isoformat(),
             "group_by": group_by,
-            "rows": [{"key": r.key, "total": _money(r.total), "count": r.count} for r in rows],
+            "rows": [
+                {"key": names.get(r.key, r.key), "total": _money(r.total), "count": r.count}
+                for r in rows
+            ],
             "total": _money(sum((r.total for r in rows), Decimal(0))),
         }
 

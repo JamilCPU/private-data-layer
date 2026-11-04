@@ -1,7 +1,6 @@
 """ASGI middleware: only the gateway (holding the shared secret) may reach the MCP endpoint.
 
-Copied from homestudio-mcp (JamilCPU/home-studio-server, ``mcp/homestudio_mcp/middleware.py``);
-keep the two in sync.
+Same middleware as the other MCP backends in this repo; keep the copies in sync.
 """
 
 import hmac

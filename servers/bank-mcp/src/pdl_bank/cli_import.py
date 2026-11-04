@@ -11,13 +11,15 @@ from collections import Counter
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+import psycopg
+
 from pdl_bank.categorize import Rule, RulesError, load_rules
 from pdl_bank.importer import ImportResult, import_inbox
 from pdl_bank.memory_store import MemoryStore
 from pdl_bank.parsers import CsvMapping, load_mappings
-from pdl_bank.store import Store
+from pdl_bank.store import Store, StoreConfigError
 
-log = logging.getLogger("pdl_bank.import")
+log = logging.getLogger(__name__)
 
 EXIT_ERRORS = 1
 EXIT_USAGE = 2
@@ -55,10 +57,16 @@ def _open_store(use_memory: bool) -> Store | None:
         return MemoryStore()
     try:
         factory = _load_store_factory()
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        if exc.name != "pdl_bank.store_factory":
+            raise
         print("Postgres store not available yet; use --memory", file=sys.stderr)
         return None
-    return factory(os.environ)
+    try:
+        return factory(os.environ)
+    except (StoreConfigError, psycopg.Error) as exc:
+        print(f"cannot open store: {exc}", file=sys.stderr)
+        return None
 
 
 def _scan(
@@ -70,7 +78,11 @@ def _scan(
     results = import_inbox(args.inbox, store, mappings, rules, processed=args.processed)
     for r in results:
         note = f" ({r.reason})" if r.reason else ""
-        print(f"{r.file}: {r.status} new={r.new_transactions}{note}")
+        line = f"{r.file}: {r.status} new={r.new_transactions}{note}"
+        if args.memory:
+            print(line)
+        else:
+            log.info("%s", line)
     counts = Counter(r.status for r in results)
     log.info("import run finished: %s", ", ".join(f"{s}={counts[s]}" for s in _STATUSES))
     return results
@@ -98,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
             _scan(args, store, mappings, rules)
             time.sleep(args.interval)
     except KeyboardInterrupt:
+        log.info("interrupted, shutting down")
         return 0
 
 

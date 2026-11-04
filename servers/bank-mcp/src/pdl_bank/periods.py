@@ -14,13 +14,17 @@ from pdl_bank.store import Period
 
 __all__ = ["Period", "PeriodError", "resolve_period"]
 
-_MONTHS = {name.lower(): i for i, name in enumerate(calendar.month_name) if name}
-_MONTHS.update({name.lower(): i for i, name in enumerate(calendar.month_abbr) if name})
+_MONTH_NAMES = (
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+)  # fmt: skip
+_MONTHS = {name: i for i, name in enumerate(_MONTH_NAMES, 1)}
+_MONTHS.update({name[:3]: i for i, name in enumerate(_MONTH_NAMES, 1)})
 
-_YEAR_MONTH = re.compile(r"(\d{4})-(\d{2})")
-_YEAR = re.compile(r"\d{4}")
-_LAST_DAYS = re.compile(r"last (\d+) days?")
-_MONTH_NAME = re.compile(r"([a-z]+)(?: (\d{4}))?")
+_YEAR_MONTH = re.compile(r"(\d{4})-(\d{2})", re.ASCII)
+_YEAR = re.compile(r"\d{4}", re.ASCII)
+_LAST_DAYS = re.compile(r"last (\d+) days?", re.ASCII)
+_MONTH_NAME = re.compile(r"([a-z]+)(?: (\d{4}))?", re.ASCII)
 
 
 class PeriodError(ValueError):
@@ -54,7 +58,10 @@ def _previous_month(today: date) -> Period:
 def resolve_period(text: str, today: date) -> Period:
     """Resolve ``text`` to a Period relative to ``today``; raise PeriodError otherwise."""
     raw = " ".join(text.lower().split())
-    result = _resolve(raw, today)
+    try:
+        result = _resolve(raw, today)
+    except (ValueError, OverflowError) as exc:
+        raise PeriodError(f"unrecognised period: {text!r}") from exc
     if result is None:
         raise PeriodError(f"unrecognised period: {text!r}")
     return result

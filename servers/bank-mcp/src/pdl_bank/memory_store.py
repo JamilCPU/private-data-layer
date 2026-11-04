@@ -2,25 +2,15 @@
 
 from __future__ import annotations
 
-import re
-import statistics
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import date
 from decimal import Decimal
-from itertools import pairwise
 
 from pdl_bank.categorize import UNCATEGORIZED
-from pdl_bank.models import Account, Transaction, normalise_description
+from pdl_bank.models import Account, Transaction
+from pdl_bank.recurring import recurring_charges
 from pdl_bank.store import GroupBy, RecurringCharge, SummaryRow
-
-_NON_LETTERS = re.compile(r"[^a-z\s]")
-
-
-def recurring_key(description: str) -> str:
-    """Lowercased description with digits and punctuation removed."""
-    stripped = _NON_LETTERS.sub("", normalise_description(description))
-    return " ".join(stripped.split())
 
 
 def _group_key(tx: Transaction, group_by: GroupBy) -> str:
@@ -51,14 +41,6 @@ def _matches(
         needle = query.lower()
         return needle in tx.description.lower() or needle in (tx.category or "").lower()
     return True
-
-
-def _to_charge(key: str, group: list[Transaction]) -> RecurringCharge:
-    ordered = sorted(group, key=lambda t: (t.posted_on, t.id))
-    dates = [t.posted_on for t in ordered]
-    gaps = [(b - a).days for a, b in pairwise(dates)]
-    cadence = statistics.median_low(gaps) if gaps else 0
-    return RecurringCharge(key, abs(ordered[-1].amount), len(ordered), dates[-1], cadence)
 
 
 class MemoryStore:
@@ -111,17 +93,7 @@ class MemoryStore:
         return sorted(rows, key=lambda r: (-r.total, r.key))
 
     def recurring(self, min_occurrences: int = 3) -> list[RecurringCharge]:
-        groups: dict[tuple[str, Decimal], list[Transaction]] = defaultdict(list)
-        for tx in self._txs.values():
-            if tx.amount < 0:
-                rounded = abs(tx.amount).quantize(Decimal(1))
-                groups[(recurring_key(tx.description), rounded)].append(tx)
-        charges = [
-            _to_charge(key, group)
-            for (key, _), group in groups.items()
-            if len(group) >= min_occurrences
-        ]
-        return sorted(charges, key=lambda c: (c.last_on, c.description_key), reverse=True)
+        return recurring_charges(list(self._txs.values()), min_occurrences)
 
     def record_import(self, file_hash: str, filename: str, imported_on: date, count: int) -> None:
         self._imports[file_hash] = (filename, imported_on, count)

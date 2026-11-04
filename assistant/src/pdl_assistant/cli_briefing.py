@@ -6,8 +6,9 @@ import os
 import sqlite3
 import sys
 from argparse import Namespace
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 from .__main__ import base_parser, build_clients, read_client_secret
@@ -24,6 +25,18 @@ OFFLINE_NOTE = "brain offline"
 EXIT_OFFLINE = 2  # --now with the brain offline: nothing ran and nothing was recorded
 
 
+class _Llm(Protocol):
+    async def probe(self) -> bool: ...
+
+    async def chat(self, messages: Sequence[Any], tools: Sequence[dict]) -> Any: ...
+
+
+class _Gateway(Protocol):
+    async def list_tools(self) -> list[Any]: ...
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any: ...
+
+
 def _past_cutoff(config: AssistantConfig, moment: datetime) -> bool:
     local = moment.astimezone(ZoneInfo(config.briefing_timezone)).time()
     return local >= parse_hhmm("briefing_retry_until", config.briefing_retry_until)
@@ -31,7 +44,7 @@ def _past_cutoff(config: AssistantConfig, moment: datetime) -> bool:
 
 async def _wait_for_brain(
     config: AssistantConfig,
-    llm,
+    llm: _Llm,
     now: Callable[[], datetime],
     sleep: Callable[[float], Awaitable[None]],
 ) -> bool:
@@ -49,8 +62,8 @@ async def run_briefing(
     now: Callable[[], datetime],
     sleep: Callable[[float], Awaitable[None]],
     notifier: Notifier,
-    llm,
-    gateway,
+    llm: _Llm,
+    gateway: _Gateway,
     memory: MemoryStore,
     retry: bool = True,
 ) -> str:

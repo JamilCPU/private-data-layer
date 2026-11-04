@@ -100,11 +100,13 @@ exist.
 
 The `briefing` CronJob runs `pdl-assistant-briefing` at 07:30 America/Chicago with the assistant image and the assistant's data volume. It needs the in-cluster `ntfy` Service (port 80) and two out-of-band objects:
 
-1. **ntfy user and token.** Pipe the token so it never reaches your terminal history or screen:
+1. **ntfy user and token.** `ntfy user add` prompts for a password, hence `-it`. The token is captured in a shell variable and piped into the Secret, so it is never echoed:
    ```bash
-   kubectl -n lab exec deploy/ntfy -- ntfy user add owner
+   kubectl -n lab exec -it deploy/ntfy -- ntfy user add owner
    kubectl -n lab exec deploy/ntfy -- ntfy access owner briefing rw
-   kubectl -n lab exec deploy/ntfy -- ntfy token add --label assistant owner      | grep -o 'tk_[A-Za-z0-9]*'      | kubectl -n lab create secret generic ntfy-publish --from-file=token=/dev/stdin
+   tok=$(kubectl -n lab exec deploy/ntfy -- ntfy token add --label assistant owner      | grep -o 'tk_[A-Za-z0-9]*'); [ -n "$tok" ] || exit 1
+   printf '%s' "$tok" | kubectl -n lab create secret generic ntfy-publish --from-file=token=/dev/stdin
+   unset tok
    ```
 2. **Config.**
    ```bash
@@ -112,7 +114,7 @@ The `briefing` CronJob runs `pdl-assistant-briefing` at 07:30 America/Chicago wi
    ```
 3. **Run it now** with `kubectl -n lab create job --from=cronjob/briefing briefing-now`, read `kubectl -n lab logs job/briefing-now`, then `kubectl -n lab delete job briefing-now`.
 
-The pod stays in `ContainerCreating` until `ntfy-publish`, `briefing-config` and the assistant's own objects exist. Phone setup is in `assistant/README.md` ("Briefing").
+The pod stays in `ContainerCreating` until `ntfy-publish`, `briefing-config` and the assistant's own objects exist. The assistant Deployment must have run once first: its `own-data` init container sets the ownership of `/data`, which the job shares. Phone setup is in `assistant/README.md` ("Briefing").
 
 ## Bank and email
 

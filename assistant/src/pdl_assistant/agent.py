@@ -139,10 +139,10 @@ class Agent:
             except LlmError as exc:
                 logger.warning("unreadable model reply: %s", exc)
                 return Reply(LLM_ERROR_TEXT, made, offline=False, step_capped=False)
-            if final and (answer.tool_calls or step > 1):
+            if final and (answer.tool_calls or not answer.content.strip()):
                 return _capped(answer.content, made)
-            if not answer.tool_calls:
-                return Reply(answer.content, made, offline=False, step_capped=False)
+            if final or not answer.tool_calls:  # a forced final answer still counts as capped
+                return Reply(answer.content, made, offline=False, step_capped=final)
             calls_row = _calls_json(answer.tool_calls)
             self._memory.add_message(conversation_id, "assistant", calls_row, tool_name=CALLS_MARK)
             results, called = await self._run_calls(conversation_id, answer.tool_calls, known)

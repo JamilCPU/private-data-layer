@@ -4,7 +4,8 @@ services:
   gateway:
     build: ../../gateway
     ports:
-      - "8787:8787"
+      # Loopback only: the dev stack runs on dev secrets and must not be reachable from the LAN.
+      - "127.0.0.1:8787:8787"
     volumes:
       - ./gateway.dev.yaml:/etc/pdl/gateway.yaml:ro
       - ./secrets.dev.yaml:/etc/pdl/secrets.yaml:ro
@@ -57,7 +58,8 @@ services:
   assistant:
     build: ../../assistant
     ports:
-      - "8790:8790"
+      # Loopback only: the dev stack runs on dev secrets and must not be reachable from the LAN.
+      - "127.0.0.1:8790:8790"
     environment:
       # API calls go to the compose gateway by service name. The browser login is redirected to
       # that same address, so see README.md for the one-line hosts entry.

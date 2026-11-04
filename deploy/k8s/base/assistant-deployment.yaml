@@ -38,6 +38,9 @@ spec:
           securityContext:
             runAsUser: 0
             runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            # chown needs CHOWN/FOWNER; DAC_OVERRIDE lets root read files owned by another uid.
+            capabilities: {drop: [ALL], add: [CHOWN, FOWNER, DAC_OVERRIDE]}
           volumeMounts:
             - {name: data, mountPath: /data}
       containers:
@@ -55,6 +58,7 @@ spec:
             # The browser login redirects to the gateway's public URL (its issuer), so the
             # assistant uses that same URL; it verifies the gateway's lab-CA certificate.
             - {name: ASSISTANT_GATEWAY_URL, value: "https://gateway.lab"}
+            # Replaces the trust store for all outbound TLS in the pod (only the gateway is TLS).
             - {name: SSL_CERT_FILE, value: /etc/pdl/ca/lab-ca.pem}
             - {name: ASSISTANT_PUBLIC_URL, value: "https://assistant.lab"}
             - {name: ASSISTANT_DB_PATH, value: /data/assistant.db}

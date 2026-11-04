@@ -20,3 +20,9 @@ system_prompt_extra: ""
 # ntfy_url: https://ntfy.example
 # ntfy_topic: briefing
 # ntfy_token_file: /run/secrets/ntfy-token
+# Morning briefing (pdl-assistant-briefing): local time zone, the HH:MM after which an offline
+# model skips the day, seconds between probes while waiting, and how many news items to pick.
+# briefing_timezone: America/Chicago
+# briefing_retry_until: "10:00"
+# briefing_retry_interval_s: 900
+# briefing_news_count: 3

@@ -96,6 +96,24 @@ the gateway, and talks to an Ollama server for the model. Deploy it after the ga
 The pod stays in `ContainerCreating` until `assistant-secrets`, `assistant-config` and `lab-ca`
 exist.
 
+### Briefing
+
+The `briefing` CronJob runs `pdl-assistant-briefing` at 07:30 America/Chicago with the assistant image and the assistant's data volume. It needs the in-cluster `ntfy` Service (port 80) and two out-of-band objects:
+
+1. **ntfy user and token.** Pipe the token so it never reaches your terminal history or screen:
+   ```bash
+   kubectl -n lab exec deploy/ntfy -- ntfy user add owner
+   kubectl -n lab exec deploy/ntfy -- ntfy access owner briefing rw
+   kubectl -n lab exec deploy/ntfy -- ntfy token add --label assistant owner      | grep -o 'tk_[A-Za-z0-9]*'      | kubectl -n lab create secret generic ntfy-publish --from-file=token=/dev/stdin
+   ```
+2. **Config.**
+   ```bash
+   kubectl -n lab create configmap briefing-config      --from-literal=ASSISTANT_NTFY_TOPIC=briefing      --from-literal=ASSISTANT_BRIEFING_TIMEZONE=America/Chicago
+   ```
+3. **Run it now** with `kubectl -n lab create job --from=cronjob/briefing briefing-now`, read `kubectl -n lab logs job/briefing-now`, then `kubectl -n lab delete job briefing-now`.
+
+The pod stays in `ContainerCreating` until `ntfy-publish`, `briefing-config` and the assistant's own objects exist. Phone setup is in `assistant/README.md` ("Briefing").
+
 ## Bank and email
 
 `bank-mcp` and `email-mcp` are read-only MCP servers over the `bank` and `email` sources in the

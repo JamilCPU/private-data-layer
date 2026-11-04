@@ -40,12 +40,13 @@ jobs:
       run:
         working-directory: servers/bank-mcp
     env:
-      TEST_PG_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+      # The CI database is an ephemeral service container; its password is the run id, not a secret.
+      TEST_PG_DSN: postgresql://postgres:${{ github.run_id }}@localhost:5432/postgres
     services:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_PASSWORD: postgres
+          POSTGRES_PASSWORD: ${{ github.run_id }}
         ports:
           - 5432:5432
         options: >-

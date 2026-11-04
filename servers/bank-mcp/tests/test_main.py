@@ -99,3 +99,15 @@ def test_main_postgres_startup_errors_exit_1(monkeypatch, capsys, runs, error) -
     assert entry.main([]) == 1
     assert capsys.readouterr().err.startswith("bank-mcp: ")
     assert runs == []
+
+
+def test_main_unrelated_missing_module_propagates(monkeypatch, runs) -> None:
+    monkeypatch.setenv("BANK_MCP_SHARED_SECRET", "s3cret")
+
+    def broken():
+        raise ModuleNotFoundError("No module named 'psycopg_pool'", name="psycopg_pool")
+
+    monkeypatch.setattr(entry, "_load_store_factory", broken)
+    with pytest.raises(ModuleNotFoundError):
+        entry.main([])
+    assert runs == []

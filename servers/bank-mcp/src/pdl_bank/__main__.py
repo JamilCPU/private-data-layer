@@ -38,7 +38,9 @@ def _open_store() -> Store | None:
         return None
     try:
         factory = _load_store_factory()
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as exc:
+        if exc.name != "pdl_bank.store_factory":
+            raise
         _error("Postgres store not available yet; set BANK_STORE=memory")
         return None
     try:

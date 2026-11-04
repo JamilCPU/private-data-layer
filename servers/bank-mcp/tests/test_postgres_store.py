@@ -93,3 +93,44 @@ def test_unknown_account_is_rejected(pg: PostgresStore) -> None:
 
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         pg.upsert_transactions([tx("x", date(2026, 1, 1), "-1", "d", None, "nope")])
+
+
+def test_migration_applies_without_reader_role(migrated: None, tmp_path: Path) -> None:
+    text = (MIGRATIONS_DIR / "001_bank.sql").read_text(encoding="utf-8")
+    text = text.replace("bank_reader", "bank_reader_absent_role").replace("bank", "scratch_nr")
+    (tmp_path / "001_bank.sql").write_text(text)
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        try:
+            assert apply_migrations(conn, tmp_path, schema="scratch_nr") == ["001_bank.sql"]
+        finally:
+            conn.execute("DROP SCHEMA IF EXISTS scratch_nr CASCADE")
+
+
+def test_non_autocommit_connection_commits_per_file(migrated: None, tmp_path: Path) -> None:
+    (tmp_path / "001_good.sql").write_text("CREATE TABLE scratch_na.good (x int);")
+    (tmp_path / "002_bad.sql").write_text("CREATE TABLE scratch_na.bad (x int); SELECT 1/0;")
+    try:
+        with psycopg.connect(DSN) as conn, pytest.raises(psycopg.errors.DivisionByZero):
+            apply_migrations(conn, tmp_path, schema="scratch_na")
+        with psycopg.connect(DSN, autocommit=True) as check:
+            assert check.execute("SELECT to_regclass('scratch_na.good')").fetchone() != (None,)
+            assert check.execute("SELECT to_regclass('scratch_na.bad')").fetchone() == (None,)
+            rows = check.execute("SELECT name FROM scratch_na.schema_migrations").fetchall()
+        assert rows == [("001_good.sql",)]
+    finally:
+        with psycopg.connect(DSN, autocommit=True) as admin:
+            admin.execute("DROP SCHEMA IF EXISTS scratch_na CASCADE")
+
+
+def test_reader_role_gets_select_when_it_exists() -> None:
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        conn.execute(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'bank_reader') "
+            "THEN CREATE ROLE bank_reader NOLOGIN; END IF; END $$"
+        )
+        conn.execute("DROP SCHEMA IF EXISTS bank CASCADE")
+        apply_migrations(conn, MIGRATIONS_DIR)
+        assert conn.execute(
+            "SELECT has_table_privilege('bank_reader', 'bank.transactions', 'SELECT'), "
+            "has_table_privilege('bank_reader', 'bank.transactions', 'INSERT')"
+        ).fetchone() == (True, False)

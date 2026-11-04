@@ -117,14 +117,15 @@ def build_server(
         grouping: GroupBy = group_by
         rows = store.summary(resolved.since, resolved.until, grouping)
         names = {a.id: a.name for a in store.accounts()} if group_by == "account" else {}
+        # Map ids to names before sorting so ties order by the key the caller actually sees.
+        shown = sorted(
+            ((names.get(r.key, r.key), r) for r in rows), key=lambda p: (-p[1].total, p[0])
+        )
         return {
             "since": resolved.since.isoformat(),
             "until": resolved.until.isoformat(),
             "group_by": group_by,
-            "rows": [
-                {"key": names.get(r.key, r.key), "total": _money(r.total), "count": r.count}
-                for r in rows
-            ],
+            "rows": [{"key": key, "total": _money(r.total), "count": r.count} for key, r in shown],
             "total": _money(sum((r.total for r in rows), Decimal(0))),
         }
 

@@ -1,7 +1,7 @@
 # email-mcp
 
 A read-only [MCP](https://modelcontextprotocol.io) server over one mailbox, plus the sync that
-fills the store. The sync reads the mailbox over IMAP with TLS using an app password and never
+fills the store. The sync reads the mailbox over IMAP with TLS (the server certificate and host name are verified against the system CA store) using an app password and never
 writes to it. Bodies are stored as text capped at 16,000 characters and returned capped at 4000 characters;
 search and list results carry a short snippet but no body.
 
@@ -48,7 +48,7 @@ configured through the environment:
 | `EMAIL_IMAP_HOST` | IMAP server host name |
 | `EMAIL_IMAP_USER` | Account name |
 | `EMAIL_IMAP_PASSWORD_FILE` | File holding the app password |
-| `EMAIL_IMAP_PORT` | IMAP over TLS port (default 993) |
+| `EMAIL_IMAP_PORT` | IMAP over TLS port (default 993); the certificate is verified against the system CA store |
 | `EMAIL_MAILBOX` | Mailbox to read (default `INBOX`) |
 | `EMAIL_INITIAL_DAYS` | How far back the first sync reaches (default 90) |
 

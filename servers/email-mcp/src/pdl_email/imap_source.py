@@ -7,6 +7,7 @@ import email.errors
 import imaplib
 import logging
 import re
+import ssl
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime
 from email.utils import parsedate_to_datetime
@@ -23,6 +24,11 @@ _ERR_TEXT_MAX = 200
 
 class ImapError(imaplib.IMAP4.error):
     """The server answered a command with a non-OK status."""
+
+
+def _connect_tls(host: str, port: int, *, ssl_context: ssl.SSLContext) -> imaplib.IMAP4_SSL:
+    """Open an IMAP4 over TLS connection that verifies the server certificate."""
+    return imaplib.IMAP4_SSL(host, port, ssl_context=ssl_context)
 
 
 def _check(command: str, response: tuple[Any, Any]) -> list[Any]:
@@ -73,7 +79,7 @@ class ImapSource:
         *,
         mailbox: str = "INBOX",
         port: int = 993,
-        connect: Callable[..., Any] = imaplib.IMAP4_SSL,
+        connect: Callable[..., Any] = _connect_tls,
     ) -> None:
         if _CONTROL.search(mailbox):
             raise ValueError("mailbox name contains control characters")
@@ -87,7 +93,7 @@ class ImapSource:
         self._uidvalidity = 0
 
     def open(self) -> tuple[int, int]:
-        self._conn = self._connect(self._host, self._port)
+        self._conn = self._connect(self._host, self._port, ssl_context=ssl.create_default_context())
         _check("login", self._conn.login(self._user, self._password))
         quoted = _quote(self._mailbox)
         _check("select", self._conn.select(quoted, readonly=True))

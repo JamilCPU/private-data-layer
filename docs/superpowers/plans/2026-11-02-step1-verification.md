@@ -29,3 +29,24 @@ Stack under test (plain processes, scratchpad config, throwaway secrets made by 
 - `docker compose up` on a dev box: waits for Docker Desktop being allowed on the dev workstation; the compose stack is untested until then.
 - Cluster deploy: waits for the migration (primary worker node Ready, `lab-gitops`, registry, cert-manager `lab-ca`, lab DNS record for `gateway.lab`), see `deploy/k8s/README.md`.
 - Automations calls return "hub request timed out" until the hub is re-homed.
+
+## Cluster deployment — 2026-11-03
+
+Deployed through GitOps (`lab-gitops` `apps/private-data-layer`, Flux) on the k3s cluster:
+`gateway` and `homestudio-mcp` pods Running on the primary worker; Ingress `gateway.lab` on
+`:443` with a certificate from the lab CA (`deploy/k8s/make-lab-tls.sh`); Secret and ConfigMap
+created out of band as in `deploy/k8s/README.md`. Two deploy defects found and fixed on the way:
+Secret-mounted files were unreadable without `fsGroup`, and Kubernetes service-link env vars
+(`HOMESTUDIO_MCP_PORT=tcp://…`) overrode the server's port until `enableServiceLinks: false`.
+
+Verified from a workstation over TLS (CA chain validated, `ssl_verify=0`):
+- `/healthz` → `{"ok": true}`; protected-resource metadata advertises the interactive scopes and `https://gateway.lab/` as the issuer.
+- Headless `personal-assistant`: token with all seven scopes; tools = the five Home Studio read tools + `gateway_audit_search`; `homestudio_get_taste_profile` returned the live profile; `bank_spend_summary` → `unknown tool`.
+- Interactive client (DCR with every advertised scope → mapped down): token scope `homestudio:read automations:read`; tools = the five Home Studio read tools; `homestudio_get_now_playing` returned the live player state; `gateway_audit_search` and `automations_reboot_device` → `unknown tool`.
+- `gateway_audit_search` over the last five minutes listed every call above with both client names.
+
+Pending: `homestudio_list_ratings` answers "Method Not Allowed" until the Home Studio server on
+the Pi is updated to the merged version; the Automations backend is commented out in the cluster
+config until its pinned certificate is mounted as the gateway's CA; a Claude Code session on the
+workstation needs the lab DNS (for `gateway.lab`) and the lab CA (`NODE_EXTRA_CA_CERTS`) before it
+can connect to the cluster gateway (it was verified against a local gateway on 2026-11-02).

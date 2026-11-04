@@ -15,7 +15,7 @@ from pdl_email.store import SyncResult, SyncState
 from pdl_email.sync import sync_once
 
 from .fake_imap import FakeImap
-from .test_memory_store import make
+from .store_cases import make
 
 TODAY = date(2026, 11, 4)
 

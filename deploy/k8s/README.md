@@ -104,14 +104,18 @@ The `briefing` CronJob runs `pdl-assistant-briefing` at 07:30 America/Chicago wi
    ```bash
    kubectl -n lab exec -it deploy/ntfy -- ntfy user add owner
    kubectl -n lab exec deploy/ntfy -- ntfy access owner briefing rw
-   tok=$(kubectl -n lab exec deploy/ntfy -- ntfy token add --label assistant owner      | grep -o 'tk_[A-Za-z0-9]*'); [ -n "$tok" ] || exit 1
+   tok=$(kubectl -n lab exec deploy/ntfy -- ntfy token add --label assistant owner \
+     | grep -o 'tk_[A-Za-z0-9]*'); [ -n "$tok" ] || echo "no token found" >&2
    printf '%s' "$tok" | kubectl -n lab create secret generic ntfy-publish --from-file=token=/dev/stdin
    unset tok
    ```
 2. **Config.**
    ```bash
-   kubectl -n lab create configmap briefing-config      --from-literal=ASSISTANT_NTFY_TOPIC=briefing      --from-literal=ASSISTANT_BRIEFING_TIMEZONE=America/Chicago
+   kubectl -n lab create configmap briefing-config \
+     --from-literal=ASSISTANT_NTFY_TOPIC=briefing \
+     --from-literal=ASSISTANT_BRIEFING_TIMEZONE=America/Chicago
    ```
+   The CronJob's `timeZone` and `ASSISTANT_BRIEFING_TIMEZONE` must be changed together.
 3. **Run it now** with `kubectl -n lab create job --from=cronjob/briefing briefing-now`, read `kubectl -n lab logs job/briefing-now`, then `kubectl -n lab delete job briefing-now`.
 
 The pod stays in `ContainerCreating` until `ntfy-publish`, `briefing-config` and the assistant's own objects exist. The assistant Deployment must have run once first: its `own-data` init container sets the ownership of `/data`, which the job shares. Phone setup is in `assistant/README.md` ("Briefing").
@@ -231,9 +235,9 @@ Both live in their own folders (`searxng/`, `ntfy/`; in `lab-gitops` as `apps/se
    kubectl -n lab create secret generic searxng --from-literal=secret_key="$(openssl rand -hex 32)"
    ```
    `settings.yml` is mounted by subPath and the root filesystem stays writable because the image
-   writes `/etc/searxng/uwsgi.ini` at start; no user override is set, so the image's entrypoint
-   drops privileges itself. If the pod fails on a missing capability, check its log before adding
-   one back. Without egress to the search engines (or with the policy blocking them) searches
+   writes `/etc/searxng/uwsgi.ini` at start. The image normally starts as root and drops
+   privileges itself, which cannot work with all capabilities dropped, so the pod runs directly as
+   the image's own user (uid/gid 977, non-root). Without egress to the search engines (or with the policy blocking them) searches
    return empty result sets, so test with a query after the first start.
 2. **ntfy.** Message cache and user database live on the primary node and must belong to uid 1000
    (the `ntfy` user in the image):

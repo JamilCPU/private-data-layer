@@ -14,10 +14,14 @@ committed files**: those are created out of band with `kubectl` and this folder'
    ```bash
    docker build -t registry.lab:5000/lab/pdl-gateway:<git-sha> gateway/ && docker push registry.lab:5000/lab/pdl-gateway:<git-sha>
    ```
-2. **TLS.** `bash make-lab-tls.sh gateway.lab gateway-lab-tls` creates a lab CA (first run) and
-   the server certificate, and prints the `kubectl create secret tls` command. Install
-   `lab-ca.pem` on each client machine; Claude Code runs on Node, which ignores the OS trust
-   store, so also set `NODE_EXTRA_CA_CERTS` to that file where Claude Code runs.
+2. **TLS.** The cluster runs cert-manager with a `lab-ca` ClusterIssuer; both Ingresses carry
+   `cert-manager.io/cluster-issuer: lab-ca`, so the certificates in `gateway-lab-tls` and
+   `assistant-lab-tls` are issued and renewed automatically. Nothing to create by hand.
+   Clients must trust the lab CA: export it once with
+   `kubectl -n cert-manager get secret <issuer secret> -o jsonpath='{.data.tls\.crt}' | base64 -d > lab-ca.pem`
+   and install it on each client machine (`scripts/trust-lab-ca.ps1` does it on Windows and sets
+   `NODE_EXTRA_CA_CERTS` for Claude Code, which ignores the OS trust store).
+   `make-lab-tls.sh` remains for clusters without cert-manager.
 3. **Secrets and config.** From the gateway package (`uv run ...` in `gateway/`):
    ```bash
    uv run pdl-set-passphrase > secrets.yaml           # one hidden prompt, twice

@@ -6,6 +6,8 @@ metadata:
   name: assistant
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # cert-manager issues and renews the certificate from the lab CA into the TLS Secret below.
+    cert-manager.io/cluster-issuer: lab-ca
 spec:
   tls:
     - hosts: [assistant.lab]

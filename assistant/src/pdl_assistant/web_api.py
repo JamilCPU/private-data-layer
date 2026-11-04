@@ -1,5 +1,6 @@
 """JSON routes: the browser chat API (session cookie) and the OpenAI-compatible ``/v1`` (bearer)."""
 
+import json
 import re
 import time
 import uuid
@@ -19,6 +20,9 @@ from .memory import MemoryStore
 MAX_MESSAGE_CHARS = 4000
 TITLE_CHARS = 60
 MESSAGES_LIMIT = 500
+MAX_BODY_BYTES = 65536
+MAX_ID = 2**63
+_INVALID = object()  # body was not parseable JSON
 _CHAT_KEYS = frozenset({"conversation_id", "message"})
 _DIGITS = re.compile(r"[0-9]{1,18}")
 
@@ -37,12 +41,23 @@ def _title(text: str) -> str:
     return " ".join(text.split())[:TITLE_CHARS]
 
 
+def _id_ok(cid: int) -> bool:
+    """Ids SQLite can hold; anything else cannot name a stored conversation."""
+    return 0 < cid < MAX_ID
+
+
 async def _json_body(request: Request) -> Any:
-    """The parsed JSON body, or ``...`` (Ellipsis) when the body is not JSON."""
+    """The parsed JSON body; an error ``Response`` for a wrong type or size; else ``_INVALID``."""
+    media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if media_type != "application/json":
+        return _error("content type must be application/json", 415)
+    raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        return _error("request body too large", 413)
     try:
-        return await request.json()
-    except ValueError:
-        return ...
+        return json.loads(raw)
+    except (ValueError, RecursionError):
+        return _INVALID
 
 
 def _parse_chat(body: Any) -> tuple[int | None, str] | str:
@@ -59,20 +74,28 @@ def _parse_chat(body: Any) -> tuple[int | None, str] | str:
 
 
 def chat_routes(
-    agent: Agent, memory: MemoryStore, session_ok: Callable[[Request], bool]
+    agent: Agent,
+    memory: MemoryStore,
+    session_ok: Callable[[Request], bool],
+    origin_ok: Callable[[Request], bool],
 ) -> list[Route]:
-    """``/api/chat`` and the conversation history routes, all behind ``session_ok``."""
+    """``/api/chat`` and the history routes, behind ``session_ok`` (POSTs also ``origin_ok``)."""
 
     async def chat(request: Request) -> Response:
         if not session_ok(request):
             return _error("login required", 401)
-        parsed = _parse_chat(await _json_body(request))
+        if not origin_ok(request):
+            return _error("cross-origin request refused", 403)
+        body = await _json_body(request)
+        if isinstance(body, Response):
+            return body
+        parsed = _parse_chat(body)
         if isinstance(parsed, str):
             return _error(parsed, 422)
         cid, text = parsed
         if cid is None:
             cid = memory.new_conversation(_title(text))
-        elif memory.get_conversation(cid) is None:
+        elif not _id_ok(cid) or memory.get_conversation(cid) is None:
             return _error("no such conversation", 404)
         reply = await agent.reply(cid, text)
         return JSONResponse(
@@ -96,7 +119,7 @@ def chat_routes(
         if not session_ok(request):
             return _error("login required", 401)
         cid = request.path_params["conversation_id"]
-        if memory.get_conversation(cid) is None:
+        if not _id_ok(cid) or memory.get_conversation(cid) is None:
             return _error("no such conversation", 404)
         rows = memory.recent_messages(cid, limit=MESSAGES_LIMIT)
         keys = ("role", "content", "tool_name", "created_at")
@@ -163,6 +186,8 @@ def openai_routes(
         if not await authorized(request):
             return unauthorized()
         body = await _json_body(request)
+        if isinstance(body, Response):
+            return body
         if not isinstance(body, dict):
             return _error("body must be a JSON object", 400)
         if body.get("stream") is True:

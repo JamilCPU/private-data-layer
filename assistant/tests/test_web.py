@@ -13,7 +13,8 @@ from pdl_assistant.auth import GatewayLogin
 from pdl_assistant.config import AssistantConfig, AssistantSecrets
 from pdl_assistant.memory import MemoryStore
 from pdl_assistant.secrets import hash_secret
-from pdl_assistant.web import LOGIN_LIMIT, build_app
+from pdl_assistant.web import LOGIN_LIMIT, SECURITY_HEADERS, LoginLimiter, build_app
+from pdl_assistant.web_api import MAX_BODY_BYTES
 
 from .conftest import GATEWAY_URL, serve_gateway
 
@@ -281,10 +282,19 @@ async def test_chat_message_length_422(rig: Rig, body: object) -> None:
 
 async def test_chat_invalid_json_and_unknown_conversation(rig: Rig) -> None:
     await _log_in(rig)
-    bad = await rig.client.post("/api/chat", content=b"{nope", headers={"content-type": "x"})
+    json_type = {"content-type": "application/json"}
+    bad = await rig.client.post("/api/chat", content=b"{nope", headers=json_type)
     assert bad.status_code == 422
-    missing = await rig.client.post("/api/chat", json={"conversation_id": 999, "message": "hi"})
-    assert missing.status_code == 404
+    huge = await rig.client.post("/api/chat", content=b"[" * 100_000, headers=json_type)
+    assert huge.status_code == 413
+    nested = b"[" * 20_000 + b"]" * 20_000  # under 64 KiB, deep enough to recurse
+    recursed = await rig.client.post("/api/chat", content=nested, headers=json_type)
+    assert recursed.status_code == 422
+    for cid in (999, 0, -1, 2**63, 2**70):
+        missing = await rig.client.post("/api/chat", json={"conversation_id": cid, "message": "hi"})
+        assert missing.status_code == 404, cid
+    for path in ("/api/conversations/0/messages", f"/api/conversations/{2**64}/messages"):
+        assert (await rig.client.get(path)).status_code == 404
     ok = await rig.client.post("/api/chat", json={"conversation_id": None, "message": "x" * 4000})
     assert ok.status_code == 200
 
@@ -426,3 +436,80 @@ async def test_login_gateway_unreachable_is_502(tmp_path: Path) -> None:
         assert resp.status_code == 502
     finally:
         memory.close()
+
+
+# --- content type, origin, body size ---------------------------------------------------------
+
+
+async def test_chat_requires_json_content_type(rig: Rig) -> None:
+    await _log_in(rig)
+    raw = b'{"conversation_id": null, "message": "hi"}'
+    plain = await rig.client.post("/api/chat", content=raw, headers={"content-type": "text/plain"})
+    assert plain.status_code == 415
+    assert plain.json() == {"error": "content type must be application/json"}
+    missing = await rig.client.post("/api/chat", content=raw)
+    assert missing.status_code == 415
+    assert rig.agent.calls == []
+    ok = await rig.client.post(
+        "/api/chat", content=raw, headers={"content-type": "Application/JSON; charset=utf-8"}
+    )
+    assert ok.status_code == 200
+
+
+async def test_openai_requires_json_content_type(rig: Rig) -> None:
+    raw = b'{"messages": [{"role": "user", "content": "hi"}]}'
+    headers = {**_bearer(), "content-type": "text/plain"}
+    resp = await rig.client.post("/v1/chat/completions", content=raw, headers=headers)
+    assert resp.status_code == 415
+    assert rig.agent.calls == []
+    headers = {**_bearer(), "content-type": "application/json; charset=utf-8"}
+    assert (
+        await rig.client.post("/v1/chat/completions", content=raw, headers=headers)
+    ).status_code == 200
+
+
+async def test_body_over_64k_is_413(rig: Rig) -> None:
+    await _log_in(rig)
+    big = b'{"conversation_id": null, "message": "' + b"x" * MAX_BODY_BYTES + b'"}'
+    json_type = {"content-type": "application/json"}
+    assert (await rig.client.post("/api/chat", content=big, headers=json_type)).status_code == 413
+    headers = {**_bearer(), **json_type}
+    resp = await rig.client.post("/v1/chat/completions", content=big, headers=headers)
+    assert resp.status_code == 413
+    assert rig.agent.calls == []
+
+
+async def test_foreign_origin_refused_on_cookie_posts(rig: Rig) -> None:
+    await _log_in(rig)
+    body = {"conversation_id": None, "message": "hi"}
+    for origin in ("https://evil.test", "null", "http://assistant.test"):
+        chat = await rig.client.post("/api/chat", json=body, headers={"Origin": origin})
+        assert chat.status_code == 403, origin
+        assert chat.json() == {"error": "cross-origin request refused"}
+        logout = await rig.client.post("/logout", headers={"Origin": origin})
+        assert logout.status_code == 403
+    assert rig.agent.calls == []
+    assert (await rig.client.get("/")).status_code == 200  # the session survived
+    same = await rig.client.post("/api/chat", json=body, headers={"Origin": PUBLIC_URL})
+    assert same.status_code == 200
+    out = await rig.client.post("/logout", headers={"Origin": PUBLIC_URL})
+    assert out.status_code == 302
+
+
+async def test_security_headers_on_json(rig: Rig) -> None:
+    resp = await rig.client.get("/healthz")
+    assert resp.headers["content-type"].startswith("application/json")
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+
+
+def test_login_limiter_window_expires() -> None:
+    now = [100.0]
+    limiter = LoginLimiter(2, 10.0, clock=lambda: now[0])
+    assert limiter.allow() and limiter.allow()
+    assert not limiter.allow()
+    now[0] = 109.9
+    assert not limiter.allow()
+    now[0] = 110.0  # the first two starts are now outside the window
+    assert limiter.allow() and limiter.allow()
+    assert not limiter.allow()

@@ -8,6 +8,7 @@ from asgi_lifespan import LifespanManager
 from starlette.applications import Starlette
 
 from pdl_assistant import __main__ as entry
+from pdl_assistant.memory import MemoryStore
 
 COOKIE_SECRET = "s" * 40
 
@@ -93,3 +94,27 @@ async def test_main_secrets_flag_overrides_config(tmp_path, monkeypatch, capsys)
 
     assert code == 1
     assert "nope.yaml" in capsys.readouterr().err
+
+
+async def test_shutdown_closes_everything_even_if_a_client_fails(tmp_path, monkeypatch):
+    config = _write_files(tmp_path)
+    seen: dict[str, Any] = {}
+    closed: list[str] = []
+
+    async def boom(self: Any) -> None:
+        closed.append("login")
+        raise RuntimeError("close failed")
+
+    def recording_close(self: MemoryStore) -> None:
+        closed.append("memory")
+        real_close(self)
+
+    real_close = MemoryStore.close
+    monkeypatch.setattr(entry.GatewayLogin, "aclose", boom)
+    monkeypatch.setattr(entry.MemoryStore, "close", recording_close)
+    monkeypatch.setattr(entry.uvicorn, "run", lambda app, **k: seen.setdefault("app", app))
+
+    assert entry.main(["--config", str(config)]) == 0
+    async with LifespanManager(seen["app"]):
+        pass
+    assert closed == ["login", "memory"]

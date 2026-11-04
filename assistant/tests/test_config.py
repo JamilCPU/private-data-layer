@@ -140,3 +140,24 @@ def test_example_files_load():
     cfg = load_config(root / "assistant.example.yaml", {})
     assert cfg.model == "qwen3.5:27b"
     assert load_secrets(root / "secrets.example.yaml").cookie_secret
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_tool_steps", 0),
+        ("listen_port", 0),
+        ("listen_port", 65536),
+        ("model_timeout_s", 0),
+        ("tool_timeout_s", -1),
+        ("session_ttl_s", 0),
+    ],
+)
+def test_numeric_bounds(tmp_path: Path, field: str, value: int):
+    with pytest.raises(ConfigError, match=field):
+        load_config(_write(tmp_path, _yaml(**{field: value})), {})
+
+
+def test_numeric_bounds_edges_accepted(tmp_path: Path):
+    cfg = load_config(_write(tmp_path, _yaml(max_tool_steps=1, listen_port=65535)), {})
+    assert (cfg.max_tool_steps, cfg.listen_port) == (1, 65535)

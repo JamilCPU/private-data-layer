@@ -12,6 +12,7 @@ import yaml
 ENV_PREFIX = "ASSISTANT_"
 _MIN_COOKIE_SECRET = 32
 _URL_FIELDS = ("gateway_url", "ollama_url", "public_url")
+_MAX_PORT = 65535
 _NOT_UTF8 = (
     "not UTF-8 text (PowerShell '>' writes UTF-16; "
     "use Set-Content -Encoding utf8 or run the command in bash)"
@@ -79,6 +80,18 @@ def _check_url(name: str, value: str) -> None:
         raise ConfigError(f"{name} must be an http(s) URL, got {value!r}")
 
 
+def _check_bounds(values: Mapping[str, Any]) -> None:
+    """Numeric settings that would break the service if zero, negative or out of range."""
+    port = values.get("listen_port", 8790)
+    if not 1 <= port <= _MAX_PORT:
+        raise ConfigError(f"listen_port must be 1-{_MAX_PORT}, got {port}")
+    if values.get("max_tool_steps", 1) < 1:
+        raise ConfigError(f"max_tool_steps must be >= 1, got {values['max_tool_steps']}")
+    for name in ("model_timeout_s", "tool_timeout_s", "session_ttl_s"):
+        if values.get(name, 1) <= 0:
+            raise ConfigError(f"{name} must be > 0, got {values[name]}")
+
+
 def load_config(path: Path | None, env: Mapping[str, str]) -> AssistantConfig:
     """Load config from an optional YAML file, overridden by ``ASSISTANT_<FIELD>`` env vars."""
     raw = _read_mapping(path) if path is not None else {}
@@ -97,6 +110,7 @@ def load_config(path: Path | None, env: Mapping[str, str]) -> AssistantConfig:
     values = {n: _cast(n, specs[n].type, v) for n, v in merged.items()}  # type: ignore[arg-type]
     for name in _URL_FIELDS:
         _check_url(name, values[name])
+    _check_bounds(values)
     return AssistantConfig(**values)
 
 

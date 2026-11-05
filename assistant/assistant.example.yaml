@@ -13,6 +13,9 @@ listen_host: 0.0.0.0
 listen_port: 8790
 max_tool_steps: 6
 model_timeout_s: 120
+# Reasoning models can spend most of the timeout thinking before a short answer. false turns
+# thinking off, true forces it on, unset keeps the model's default.
+# model_think: false
 tool_timeout_s: 60
 session_ttl_s: 43200
 system_prompt_extra: ""

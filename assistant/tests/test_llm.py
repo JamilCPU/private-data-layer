@@ -153,6 +153,29 @@ async def test_chat_sends_tools_and_num_ctx() -> None:
     }
 
 
+@respx.mock
+@pytest.mark.parametrize("think", [True, False])
+async def test_chat_sends_think_only_when_configured(think: bool) -> None:
+    route = respx.post(f"{BASE}/api/chat").mock(
+        return_value=_reply({"role": "assistant", "content": "ok"})
+    )
+
+    await OllamaClient(BASE, MODEL, think=think).chat([ChatMessage("user", "hi")], [])
+
+    assert json.loads(route.calls.last.request.content)["think"] is think
+
+
+@respx.mock
+async def test_chat_omits_think_by_default() -> None:
+    route = respx.post(f"{BASE}/api/chat").mock(
+        return_value=_reply({"role": "assistant", "content": "ok"})
+    )
+
+    await OllamaClient(BASE, MODEL).chat([ChatMessage("user", "hi")], [])
+
+    assert "think" not in json.loads(route.calls.last.request.content)
+
+
 async def test_injected_client_is_used() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return _tags(MODEL)

@@ -33,7 +33,8 @@ SEARCH_DESCRIPTION = (
 ACCOUNTS_DESCRIPTION = "The bank accounts that statements have been imported for."
 RECURRING_DESCRIPTION = (
     "Charges that repeat with a similar amount, such as subscriptions and rent, "
-    "with how often and when they last occurred."
+    "with how often and when they last occurred. "
+    "Each one lists the first newer charge from the same merchant at a different amount, if any."
 )
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
@@ -163,6 +164,15 @@ def build_server(
                 "occurrences": c.occurrences,
                 "last_on": c.last_on.isoformat(),
                 "cadence_days": c.cadence_days,
+                "changed": [
+                    {
+                        "id": ch.id,
+                        "posted_on": ch.posted_on.isoformat(),
+                        "amount": _money(ch.amount),
+                        "description": ch.description,
+                    }
+                    for ch in c.changed
+                ],
             }
             for c in store.recurring()
         ]

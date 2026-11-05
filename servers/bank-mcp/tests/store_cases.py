@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from pdl_bank.models import Account, Transaction
 from pdl_bank.recurring import recurring_key
-from pdl_bank.store import RecurringCharge, Store, SummaryRow
+from pdl_bank.store import ChangedCharge, RecurringCharge, Store, SummaryRow
 
 
 def tx(
@@ -208,7 +208,14 @@ def test_recurring_rounds_half_up(empty_store: Store) -> None:
         ]
     )
     assert s.recurring(min_occurrences=2) == [
-        RecurringCharge("svc", Decimal("13.49"), 2, date(2026, 2, 1), 31)
+        RecurringCharge(
+            "svc",
+            Decimal("13.49"),
+            2,
+            date(2026, 2, 1),
+            31,
+            (ChangedCharge("c", date(2026, 3, 1), Decimal("12.49"), "Svc"),),
+        )
     ]
 
 

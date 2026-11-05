@@ -47,6 +47,32 @@ TLS trust is limited to that CA: the served chain (leaf only, leaf plus intermed
 CA) must validate against it as the sole trust anchor (PKIX with signature checks, no revocation).
 Hostname verification is the OkHttp default.
 
+## How forwarding works
+
+- `SmsReceiver` (`SMS_RECEIVED`) only starts an immediate upload run. Every text is read from the SMS
+  content provider, so the sweep is the single source of truth and a text seen twice is one queue row.
+- **Key format.** `provider_id` is `"<_id>-<date_ms>"`. AOSP reuses `_id` after the newest row is
+  deleted, so the date is part of the key (queue primary key and the value sent to the store).
+- `UploadWorker` runs every 15 minutes (network required), on every received text, and on "Sync now".
+  Runs are serialised by a process-wide lock. A run sweeps, queues, then uploads oldest first.
+- **Look-back rule.** The watermark is the newest (`date`, `_id`) the store accepted, but the sweep starts
+  24 h before it (never before the first-pairing time), because rows can become visible late (sent texts
+  flip from outbox to sent, out-of-order inserts, clock changes). It pages the provider 500 rows at a time
+  until a page is short or 500 new rows are found; rows the queue already knows do not count. The watermark
+  advances only when a batch is accepted (a `duplicates` reply counts) and survives re-pairing.
+- **First pairing** never uploads existing history: the first-pairing time is a floor for the look-back.
+- **Batch limits.** At most 100 messages and 48 KiB of encoded JSON per request. On 413 or another 4xx
+  (not 401/429) the batch is split in half and each half retried, down to one message. A message the store
+  still refuses is marked `failed`: it is kept (so it is not re-queued), never retried, and counted as
+  "rejected" in the status. 429 stops the run and WorkManager retries with backoff.
+- **Offline / 5xx.** The batch stays pending, status shows `failed: <reason>`, WorkManager retries.
+- **After revocation (401).** The token is marked invalid, status shows "not paired", the run stops
+  without retrying. Pair again to resume.
+- **Unpair or a new pairing empties the queue** (old keys are meaningless under the new pairing); the
+  look-back re-queues anything still unsent. Pairing also resets the "last result" line.
+- A missing READ_SMS permission is recorded as "missing SMS permission" and the run ends quietly.
+- Sent rows stay in the queue table as a dedupe record with the body removed.
+
 ## Build (on the primary node)
 
 The workstation has no Android SDK. Sync the project to the node and run Gradle there (JDK 21,

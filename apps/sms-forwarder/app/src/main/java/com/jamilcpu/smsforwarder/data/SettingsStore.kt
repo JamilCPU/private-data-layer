@@ -90,15 +90,17 @@ private val CA_KEY = stringPreferencesKey("ca_der_b64")
 private val TOKEN_VALID_KEY = booleanPreferencesKey("token_valid")
 private val WM_DATE_KEY = longPreferencesKey("watermark_date_ms")
 private val WM_ID_KEY = longPreferencesKey("watermark_provider_id")
+private val FLOOR_KEY = longPreferencesKey("history_floor_ms")
 
 /**
- * Last forwarded SMS: texts strictly after (dateMs, providerId) have not been uploaded yet.
- * Initialised to the pairing time so existing history is never uploaded on first pairing.
+ * Newest (dateMs, provider `_id`) the store has accepted. The sweep starts a look-back window before
+ * it, so this is a progress marker, not a strict cut-off. [floorMs] is the first pairing time: the
+ * look-back never reaches before it, so existing history is not uploaded on first pairing.
  */
-data class Watermark(val dateMs: Long, val providerId: Long) {
+data class Watermark(val dateMs: Long, val providerId: Long, val floorMs: Long = 0L) {
     fun advancedTo(dateMs: Long, providerId: Long): Watermark =
         if (dateMs > this.dateMs || (dateMs == this.dateMs && providerId > this.providerId)) {
-            Watermark(dateMs, providerId)
+            copy(dateMs = dateMs, providerId = providerId)
         } else {
             this
         }
@@ -145,9 +147,12 @@ class SettingsStore(
             it[FP_KEY] = s.caFingerprint
             it[CA_KEY] = java.util.Base64.getEncoder().encodeToString(s.caDer)
             it[TOKEN_VALID_KEY] = true
+            it.remove(LAST_RESULT_KEY)
             if (it[WM_DATE_KEY] == null) {
-                it[WM_DATE_KEY] = System.currentTimeMillis()
+                val now = System.currentTimeMillis()
+                it[WM_DATE_KEY] = now
                 it[WM_ID_KEY] = -1L
+                it[FLOOR_KEY] = now
             }
         }
     }
@@ -156,7 +161,7 @@ class SettingsStore(
     suspend fun watermark(): Watermark? {
         val prefs = data.first()
         val date = prefs[WM_DATE_KEY] ?: return null
-        return Watermark(date, prefs[WM_ID_KEY] ?: -1L)
+        return Watermark(date, prefs[WM_ID_KEY] ?: -1L, prefs[FLOOR_KEY] ?: date)
     }
 
     suspend fun setWatermark(w: Watermark) {

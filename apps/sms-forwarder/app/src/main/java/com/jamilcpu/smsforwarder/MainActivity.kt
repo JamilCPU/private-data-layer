@@ -99,7 +99,10 @@ class MainActivity : ComponentActivity() {
 
     private fun unpair() {
         UploadWorker.cancelAll(this)
-        lifecycleScope.launch { settings.clear() }
+        lifecycleScope.launch {
+            UploadWorker.clearQueue(this@MainActivity)
+            settings.clear()
+        }
     }
 
     private fun handlePairIntent(intent: Intent?) {
@@ -121,7 +124,10 @@ class MainActivity : ComponentActivity() {
 
     private fun confirmPairing(p: PendingPairing) {
         pending = null
-        lifecycleScope.launch { settings.save(p.incoming) }
+        lifecycleScope.launch {
+            UploadWorker.clearQueue(this@MainActivity) // old provider keys are orphans under a new pairing
+            settings.save(p.incoming)
+        }
     }
 
     private fun refreshPermissions() {

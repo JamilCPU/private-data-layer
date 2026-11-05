@@ -4,8 +4,10 @@ import com.jamilcpu.smsforwarder.data.OutgoingMessage
 import com.jamilcpu.smsforwarder.data.UploadResult
 import com.jamilcpu.smsforwarder.data.Watermark
 
+fun key(id: Long, dateMs: Long = id * 1000) = "$id-$dateMs"
+
 fun msg(id: Long, dateMs: Long = id * 1000) =
-    OutgoingMessage(id.toString(), dateMs, "+100", null, "in", "body $id", "1")
+    OutgoingMessage(key(id, dateMs), dateMs, "+100", null, "in", "body $id", "1")
 
 class FakeQueue : Queue {
     val rows = LinkedHashMap<String, Pair<OutgoingMessage, String>>()
@@ -17,7 +19,7 @@ class FakeQueue : Queue {
     override suspend fun nextBatch(limit: Int): List<OutgoingMessage> =
         rows.values.filter { it.second == STATE_PENDING }
             .map { it.first }
-            .sortedWith(compareBy({ it.dateMs }, { it.providerId.toLong() }))
+            .sortedWith(compareBy({ it.dateMs }, { keyId(it.providerId) }))
             .take(limit)
 
     override suspend fun markSent(ids: List<String>) = set(ids, STATE_SENT)
@@ -28,6 +30,10 @@ class FakeQueue : Queue {
         ids.forEach { id -> rows[id]?.let { rows[id] = it.first to state } }
 
     override suspend fun pendingCount(): Int = rows.values.count { it.second == STATE_PENDING }
+
+    override suspend fun known(ids: List<String>): Set<String> = ids.filter { it in rows }.toSet()
+
+    override suspend fun clear() = rows.clear()
 
     fun stateOf(id: String): String? = rows[id]?.second
 }
@@ -63,5 +69,23 @@ class ScriptedUploader(private val script: List<UploadResult>) : BatchUploader {
     override suspend fun post(messages: List<OutgoingMessage>): UploadResult {
         batches += messages
         return script[minOf(batches.size - 1, script.lastIndex)]
+    }
+}
+
+/** A provider backed by a mutable list, paged like [SmsReader.readSince]. */
+class FakeProvider(val rows: MutableList<RawSms> = mutableListOf()) : PageReader {
+    var reads = 0
+
+    override suspend fun read(sinceDateMs: Long, afterId: Long): SmsPage {
+        reads++
+        val sorted = rows.sortedWith(compareBy({ it.dateMs }, { it.id }))
+            .filter { it.dateMs > sinceDateMs || (it.dateMs == sinceDateMs && it.id > afterId) }
+            .take(SWEEP_LIMIT)
+        val last = sorted.lastOrNull()
+        return SmsPage(sorted, sorted.size, last?.dateMs ?: sinceDateMs, last?.id ?: afterId)
+    }
+
+    fun add(id: Long, dateMs: Long) {
+        rows += RawSms(id, 1, "+100", dateMs, "in", "b$id")
     }
 }

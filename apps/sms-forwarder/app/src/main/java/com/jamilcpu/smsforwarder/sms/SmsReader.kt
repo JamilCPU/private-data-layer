@@ -11,7 +11,18 @@ data class RawSms(
     val dateMs: Long,
     val direction: String,
     val body: String,
-)
+) {
+    /** `_id` alone is reused by AOSP after the newest row is deleted, so the date is part of the key. */
+    val key: String get() = providerKey(id, dateMs)
+}
+
+fun providerKey(id: Long, dateMs: Long): String = "$id-$dateMs"
+
+/** The `_id` part of a [providerKey], or null if malformed. */
+fun keyId(key: String): Long? = key.substringBefore('-').toLongOrNull()
+
+/** One page of the provider scan. [scanned] counts all rows read, including skipped types. */
+data class SmsPage(val rows: List<RawSms>, val scanned: Int, val lastDateMs: Long, val lastId: Long)
 
 const val SWEEP_LIMIT = 500
 
@@ -36,26 +47,30 @@ object SmsReader {
 
     /**
      * Texts after (sinceDateMs, lastProviderId), oldest first. At most [SWEEP_LIMIT] rows are scanned
-     * per call, so the caller sweeps again after advancing the watermark.
+     * per call; the returned page carries the cursor to continue from.
      */
-    fun readSince(resolver: ContentResolver, sinceDateMs: Long, lastProviderId: Long?): List<RawSms> {
+    fun readSince(resolver: ContentResolver, sinceDateMs: Long, lastProviderId: Long?): SmsPage {
         val args = arrayOf(sinceDateMs.toString(), sinceDateMs.toString(), (lastProviderId ?: -1L).toString())
         val out = ArrayList<RawSms>()
         var scanned = 0
+        var lastDate = sinceDateMs
+        var lastId = lastProviderId ?: -1L
         resolver.query(Telephony.Sms.CONTENT_URI, PROJECTION, SELECTION, args, SORT)?.use { c ->
             while (scanned < SWEEP_LIMIT && c.moveToNext()) {
                 scanned++
+                lastId = c.getLong(0)
+                lastDate = c.getLong(3)
                 val raw = rowToRaw(
-                    id = c.getLong(0),
+                    id = lastId,
                     threadId = if (c.isNull(1)) null else c.getLong(1),
                     address = c.getString(2),
-                    dateMs = c.getLong(3),
+                    dateMs = lastDate,
                     type = c.getInt(4),
                     body = c.getString(5),
                 )
                 if (raw != null) out += raw
             }
         }
-        return out
+        return SmsPage(out, scanned, lastDate, lastId)
     }
 }

@@ -24,9 +24,19 @@ sealed interface UploadResult {
     data object Unauthorized : UploadResult
 
     data class Failed(val reason: String) : UploadResult
+
+    /** The store refused this payload (4xx other than 401 and 429, including 413 too large). */
+    data class Rejected(val status: Int) : UploadResult
+
+    /** 429: the store asks us to slow down; stop the run and let WorkManager back off. */
+    data object RateLimited : UploadResult
 }
 
 internal val smsJson = Json {
     ignoreUnknownKeys = true
     explicitNulls = true
 }
+
+/** UTF-8 size of [m] as encoded in an upload body. */
+internal fun encodedSize(m: OutgoingMessage): Int =
+    smsJson.encodeToString(OutgoingMessage.serializer(), m).toByteArray(Charsets.UTF_8).size

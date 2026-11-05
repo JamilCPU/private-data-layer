@@ -120,6 +120,47 @@ def test_all_checks_failing_exit_1(tmp_path, monkeypatch, caplog):
     assert "failed_checks=big" in caplog.text
 
 
+class PartlyFailingGateway(FakeGateway):
+    """Transactions work, the recurring tool errors: one of two checks fails."""
+
+    async def call_tool(self, name: str, arguments: dict) -> ToolResult:
+        if name == "bank_recurring_charges":
+            return ToolResult("boom", True, None)
+        return await super().call_tool(name, arguments)
+
+
+def test_some_checks_failing_exit_0_and_logged(tmp_path, monkeypatch, caplog):
+    notifier = FakeNotifier()
+    _wire(monkeypatch, tmp_path, PartlyFailingGateway(), FakeLlm(), notifier)
+    config = _config(tmp_path)
+    (tmp_path / "flagger.yaml").write_text(
+        CHECKS_YAML + "  - name: sub\n    type: recurring_change\n    percent: 20\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.INFO):
+        assert cli_flagger.main(["--config", str(config)]) == 0
+    assert "failed_checks=sub" in caplog.text
+    assert "check sub failed: " in caplog.text
+    assert len(notifier.sent) == 1
+
+
+def test_all_checks_failing_still_sends_older_pending_flags(tmp_path, monkeypatch, caplog):
+    notifier = FakeNotifier()
+    _wire(monkeypatch, tmp_path, FakeGateway(ok=False), FakeLlm(), notifier)
+    config = _config(tmp_path)
+    store = MemoryStore(tmp_path / "a.db")
+    store.add_flag("big", "old", "big: -700 EARLIER", "2026-11-01T00:00:00+00:00")
+    store.close()
+    with caplog.at_level(logging.INFO):
+        code = cli_flagger.main(["--config", str(config)])
+    assert code == 1  # the plan: exit 1 when every check failed, even though the send worked
+    assert notifier.sent == [("Flagged: big", "big: -700 EARLIER")]
+    assert "flagger notified new=0 notified=1 failed_checks=big" in caplog.text
+    store = MemoryStore(tmp_path / "a.db")
+    assert store.unnotified_flags() == []
+    store.close()
+
+
 def test_notify_failed_exit_1(tmp_path, monkeypatch):
     async def fake_run(*args, **kwargs):
         return FlaggerOutcome(1, 0, (), "notify_failed")

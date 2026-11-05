@@ -18,7 +18,6 @@ from pdl_assistant.gateway_client import ToolResult
 log = logging.getLogger(__name__)
 
 MAX_LINE_CHARS = 160
-MAX_RECURRING = 25
 _TX_LIMIT = 200
 _LOOKUP_LIMIT = 20
 _ELLIPSIS = "…"
@@ -143,7 +142,7 @@ async def _recurring_change(
     tool = "bank_recurring_charges"
     window_start = (today - timedelta(days=lookback_days)).isoformat()
     flags: dict[str, Flag] = {}
-    for row in _rows(await gateway.call_tool(tool, {}), tool)[:MAX_RECURRING]:
+    for row in _rows(await gateway.call_tool(tool, {}), tool):
         baseline = _decimal(row, "amount", tool)
         if baseline <= 0:
             continue
@@ -202,7 +201,8 @@ async def evaluate_all(
         try:
             found = await evaluate(check, gateway, today=today, lookback_days=lookback_days)
         except Exception as exc:  # noqa: BLE001 - one broken check must not stop the others
-            log.warning("check %s failed: %s", check.name, type(exc).__name__)
+            reason = str(exc) if isinstance(exc, CheckError) else type(exc).__name__
+            log.warning("check %s failed: %s", check.name, reason)
             failed.append(check.name)
             continue
         for flag in found:

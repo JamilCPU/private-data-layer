@@ -79,7 +79,7 @@ Exit codes: 0 sent or skipped, 1 failed or bad configuration, 2 `--now` with the
 
 ## Flagger
 
-`pdl-assistant-flagger` runs your threshold checks against the gateway and pushes a notification for each new flag. It is meant to run hourly. It makes no model call and runs whether or not the model server is up.
+`pdl-assistant-flagger` runs your threshold checks against the gateway and pushes at most one notification per run, listing the new flags. It is meant to run hourly. It makes no model call and runs whether or not the model server is up.
 
 Set `flagger_config_file` to a YAML file of checks (see `flagger.example.yaml`). Three check types:
 
@@ -97,11 +97,11 @@ checks:
     senders: [billing@example.com]
 ```
 
-- **No repeats.** Each flag is identified by its check name and a key (the transaction or email id). Flags are stored in the assistant's SQLite database (the `flags` table in `db_path`); a flag is pushed once, and a push that fails stays pending and is retried, together with any new flags, on the next run. A notification shows at most 10 lines, then "and N more"; every pending flag counts as sent.
+- **No repeats.** Each flag is identified by its check name and a key (the transaction or email id). Flags are stored in the assistant's SQLite database (the `flags` table in `db_path`); a flag is pushed once, and a push that fails stays pending and is retried, together with any new flags, on the next run. Each run sends one notification listing every flag not yet sent: at most 10 lines, then "and N more"; every pending flag counts as sent, and the ones past the 10 lines stay readable in the database. If the process crashes between sending and marking, the next run can repeat that notification once. A merchant that bills both a subscription and one-off purchases under the same description can produce a one-time false recurring-change flag.
 - **Lookback.** Checks scan the last `flagger_lookback_days` days (default 45).
 - **`--dry-run`.** Evaluates the checks and logs what would be recorded and sent; writes nothing and sends nothing.
 - **Offline model.** The flagger does not need the model. With `flagger_require_brain: true` it probes the model first and skips the run silently (exit 0) when it is offline, which is the original design's rule.
-- **Briefing.** When `flagger_config_file` is set, the morning briefing's Flags line lists the flags raised since the last briefing (no model call).
+- **Briefing.** When `flagger_config_file` is set, the morning briefing's Flags line lists the flags raised since the previous briefing, up to 5 and then "and N more" (no model call). The line only appears once that file exists.
 
 Exit codes: 0 quiet, notified or skipped; 1 for a failed push, every check failing, or bad configuration.
 

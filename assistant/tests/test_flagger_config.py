@@ -66,50 +66,69 @@ def _many(n: int) -> str:
 _SENDERS_51 = ",".join(f"s{i}@x.io" for i in range(51))
 
 BAD = [
-    pytest.param(_tx(amount="0"), id="amount-zero"),
-    pytest.param(_tx(amount="-3"), id="amount-negative"),
-    pytest.param(_tx(amount="NaN"), id="amount-nan"),
-    pytest.param(_tx(amount="Infinity"), id="amount-inf"),
-    pytest.param(_tx(amount="abc"), id="amount-garbage"),
-    pytest.param(_tx(amount=True), id="amount-bool"),
-    pytest.param(_tx(direction="in"), id="direction"),
-    pytest.param(_tx(name="Bad Name"), id="name-bad"),
-    pytest.param(_tx(name=""), id="name-empty"),
-    pytest.param(_tx(name="x" * 41), id="name-long"),
-    pytest.param(_tx(type="nope"), id="unknown-type"),
-    pytest.param(_tx(extra="1"), id="unknown-key"),
-    pytest.param(_tx(percent="5"), id="key-of-other-type"),
+    pytest.param(_tx(amount="0"), "finite number > 0", id="amount-zero"),
+    pytest.param(_tx(amount="-3"), "finite number > 0", id="amount-negative"),
+    pytest.param(_tx(amount="NaN"), "finite number > 0", id="amount-nan"),
+    pytest.param(_tx(amount="Infinity"), "finite number > 0", id="amount-inf"),
+    pytest.param(_tx(amount="abc"), "must be a number", id="amount-garbage"),
+    pytest.param(_tx(amount=True), "must be a number", id="amount-bool"),
+    pytest.param(_tx(direction="in"), "direction must be one of", id="direction"),
+    pytest.param(_tx(name="Bad Name"), "name must match", id="name-bad"),
+    pytest.param(_tx(name=""), "name must match", id="name-empty"),
+    pytest.param(_tx(name="x" * 41), "name must match", id="name-long"),
+    pytest.param(_tx(type="nope"), "unknown type", id="unknown-type"),
+    pytest.param(_tx(extra="1"), "unknown key", id="unknown-key"),
+    pytest.param(_tx(percent="5"), "unknown key", id="key-of-other-type"),
     pytest.param(
-        'checks:\n  - {name: a, type: recurring_change, percent: "0"}\n', id="percent-zero"
+        'checks:\n  - {name: a, type: recurring_change, percent: "0"}\n',
+        "finite number > 0",
+        id="percent-zero",
     ),
     pytest.param(
-        'checks:\n  - {name: a, type: recurring_change, percent: "1001"}\n', id="percent-1001"
+        'checks:\n  - {name: a, type: recurring_change, percent: "1001"}\n',
+        "must be <= 1000",
+        id="percent-1001",
     ),
-    pytest.param("checks:\n  - {name: a, type: email_from, senders: []}\n", id="senders-empty"),
-    pytest.param("checks:\n  - {name: a, type: email_from, senders: ['  ']}\n", id="sender-blank"),
-    pytest.param("checks:\n  - {name: a, type: email_from, senders: x}\n", id="senders-str"),
+    pytest.param(
+        "checks:\n  - {name: a, type: email_from, senders: []}\n",
+        "senders must be a list",
+        id="senders-empty",
+    ),
+    pytest.param(
+        "checks:\n  - {name: a, type: email_from, senders: ['  ']}\n",
+        "non-blank strings",
+        id="sender-blank",
+    ),
+    pytest.param(
+        "checks:\n  - {name: a, type: email_from, senders: x}\n",
+        "senders must be a list",
+        id="senders-str",
+    ),
     pytest.param(
         "checks:\n  - {name: a, type: email_from, senders: [" + _SENDERS_51 + "]}\n",
+        "senders must be a list",
         id="senders-51",
     ),
     pytest.param(
         'checks:\n  - {name: a, type: recurring_change, percent: "5"}\n'
         '  - {name: a, type: recurring_change, percent: "6"}\n',
+        "duplicate name",
         id="duplicate-names",
     ),
-    pytest.param("checks: []\n", id="empty-checks"),
-    pytest.param("other: 1\n", id="no-checks"),
-    pytest.param(_many(21), id="21-checks"),
-    pytest.param("- a\n- b\n", id="not-a-mapping"),
-    pytest.param("checks:\n  - just a string\n", id="check-not-mapping"),
-    pytest.param("checks: [: bad\n", id="yaml-syntax"),
+    pytest.param("checks: []\n", "non-empty list", id="empty-checks"),
+    pytest.param("other: 1\n", "only a 'checks' key", id="no-checks"),
+    pytest.param(_many(21), "at most 20", id="21-checks"),
+    pytest.param("- a\n- b\n", "only a 'checks' key", id="not-a-mapping"),
+    pytest.param("checks:\n  - just a string\n", "expected a mapping", id="check-not-mapping"),
+    pytest.param("checks: [: bad\n", "cannot read flagger checks", id="yaml-syntax"),
 ]
 
 
-@pytest.mark.parametrize("text", BAD)
-def test_rejects(tmp_path: Path, text: str) -> None:
-    with pytest.raises(FlaggerConfigError, match="flagger.yaml"):
+@pytest.mark.parametrize(("text", "reason"), BAD)
+def test_rejects(tmp_path: Path, text: str, reason: str) -> None:
+    with pytest.raises(FlaggerConfigError, match="flagger.yaml") as caught:
         _load(tmp_path, text)
+    assert reason in str(caught.value)
 
 
 def test_twenty_checks_allowed(tmp_path: Path) -> None:

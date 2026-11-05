@@ -11,7 +11,6 @@ import pytest
 
 from pdl_assistant.flagger_checks import (
     MAX_LINE_CHARS,
-    MAX_RECURRING,
     CheckError,
     Flag,
     evaluate,
@@ -209,10 +208,13 @@ async def test_recurring_change_skips_non_positive_baseline() -> None:
     assert await run(RecurringChange("c", Decimal(20)), gw) == []
 
 
-async def test_recurring_change_only_first_max_recurring_rows() -> None:
-    rows = [recurring_row() for _ in range(MAX_RECURRING)]
-    rows.append(recurring_row(changed(id="late")))
-    assert await run(RecurringChange("c", Decimal(20)), recurring_gateway(*rows)) == []
+async def test_recurring_change_examines_every_row_not_just_the_first_few() -> None:
+    rows = [recurring_row() for _ in range(39)]
+    rows.insert(29, recurring_row(changed(id="late")))
+    assert len(rows) == 40
+    gw = recurring_gateway(*rows)
+    assert [f.key for f in await run(RecurringChange("c", Decimal(20)), gw)] == ["late"]
+    assert len(gw.calls) == 1
 
 
 async def test_recurring_change_dedupes_same_id_under_two_groups() -> None:
@@ -322,7 +324,8 @@ async def test_evaluate_all_keeps_good_checks_and_names_failures(
         )
     assert [f.check for f in flags] == ["big"]
     assert failed == ["watch"]
-    assert "watch" in caplog.text
+    assert "check watch failed: " in caplog.text
+    assert "email_search_email" in caplog.text  # the CheckError reason names the tool
     assert "secret body text" not in caplog.text
 
 

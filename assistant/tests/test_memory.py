@@ -194,3 +194,12 @@ def test_existing_database_gains_flags_table(tmp_path: Path):
         assert s.add_flag("c", "k", "s", _ts(1)) is True
     finally:
         s.close()
+
+
+def test_has_flag_is_read_only(store: MemoryStore):
+    assert store.has_flag("big", "t1") is False
+    assert store.unnotified_flags() == []
+    store.add_flag("big", "t1", "big: x", "2026-11-04T00:00:00+00:00")
+    assert store.has_flag("big", "t1") is True
+    assert store.has_flag("big", "t2") is False
+    assert store.has_flag("other", "t1") is False

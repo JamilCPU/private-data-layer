@@ -235,6 +235,11 @@ class MemoryStore:
         )
         return changed == 1
 
+    def has_flag(self, check_name: str, key: str) -> bool:
+        """Whether a flag for ``(check_name, key)`` is already stored (read-only)."""
+        rows = self._read("SELECT 1 FROM flags WHERE check_name = ? AND key = ?", (check_name, key))
+        return bool(rows)
+
     def unnotified_flags(self) -> list[StoredFlag]:
         """Flags not yet pushed to the owner, oldest first."""
         rows = self._read("SELECT * FROM flags WHERE notified_at IS NULL ORDER BY id")

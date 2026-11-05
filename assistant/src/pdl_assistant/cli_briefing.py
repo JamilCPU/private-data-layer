@@ -87,12 +87,19 @@ async def run_briefing(
     def today() -> date:
         return now().astimezone(zone).date()
 
+    flag_lines = None
+    if config.flagger_config_file:  # on/off switch only; the checks file is not read here
+
+        def flag_lines(since: datetime) -> list[str]:
+            return [f.summary for f in memory.flags_since(since)]
+
     sections = SectionRunner(
         gateway,
         llm,
         today=today,
         news_count=config.briefing_news_count,
         tool_timeout_s=config.tool_timeout_s,
+        flag_lines=flag_lines,
     )
     text = ""
     try:

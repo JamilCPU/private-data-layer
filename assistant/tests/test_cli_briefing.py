@@ -276,14 +276,24 @@ async def test_raising_aclose_is_logged_and_memory_still_closes(monkeypatch, cap
     assert caplog.text.count("error while closing a client") == 2
 
 
-async def test_flags_section_reads_stored_flags_without_opening_checks_file(memory):
-    missing = "/nonexistent/flagger.yaml"  # never opened: the switch is only "is it set"
-    config = replace(CONFIG, flagger_config_file=missing)
+async def test_flags_section_reads_stored_flags_without_parsing_checks_file(memory, tmp_path):
+    present = tmp_path / "flagger.yaml"
+    present.write_text(": not [valid yaml", encoding="utf-8")  # never parsed: only existence counts
+    config = replace(CONFIG, flagger_config_file=str(present))
     memory.add_flag("big", "t1", "big: -600 SHOP", START.isoformat())
     notifier = FakeNotifier()
     status, _ = await _run(memory, FakeLlm(1), notifier, config=config)
     assert status == "sent"
     assert "Flags: big: -600 SHOP" in notifier.sent[0][1]
+
+
+async def test_flags_section_not_configured_when_flagger_file_is_missing(memory, tmp_path):
+    config = replace(CONFIG, flagger_config_file=str(tmp_path / "absent.yaml"))
+    memory.add_flag("big", "t1", "big: -600 SHOP", START.isoformat())
+    notifier = FakeNotifier()
+    await _run(memory, FakeLlm(1), notifier, config=config)
+    assert "Flags: no checks configured yet." in notifier.sent[0][1]
+    assert "SHOP" not in notifier.sent[0][1]
 
 
 async def test_flags_section_not_configured_without_flagger_file(memory):

@@ -48,6 +48,8 @@ def _dry_run(flags: Sequence[Flag], memory: MemoryStore, failed: tuple[str, ...]
     fresh = [f for f in flags if not memory.has_flag(f.check, f.key)]
     for flag in fresh:
         logger.info("dry run: would record and send: %s", flag.summary)
+    for stored in memory.unnotified_flags():
+        logger.info("dry run: still pending from an earlier run: %s", stored.summary)
     return FlaggerOutcome(len(fresh), 0, failed, "quiet")
 
 

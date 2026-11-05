@@ -9,7 +9,7 @@ inference or credentials leave the owner's machines.
 **Status:** build steps 1-6 of 6 are complete: the gateway with the Home Studio and Automations
 backends (1), the assistant (2), `bank-mcp` and `email-mcp` (3), `search-mcp` on SearXNG with
 the morning briefing pushed through ntfy (4), `sms-mcp` (5), and the flagger (6): hourly
-threshold checks with one notification per new flag.
+threshold checks, with one notification per run listing the new flags.
 
 ## Architecture
 
@@ -51,7 +51,7 @@ threshold checks with one notification per new flag.
   briefing are built. A Kubernetes CronJob runs the
   briefing every morning, and it is pushed to the owner's phone through a self-hosted ntfy server.
   A second, hourly CronJob runs the rule-based flagger, which stores a flag for each tripped
-  threshold and sends one notification per new flag.
+  threshold and sends one notification per run that lists the new flags (up to 10 lines; the rest stay in the database and the notification says how many more). The morning briefing's Flags section lists the flags raised since the previous briefing (up to 5).
 
 Design document: [`docs/superpowers/specs/2026-11-02-private-data-layer-design.md`](docs/superpowers/specs/2026-11-02-private-data-layer-design.md).
 Implementation plans and verification notes: [`docs/superpowers/plans/`](docs/superpowers/plans/).

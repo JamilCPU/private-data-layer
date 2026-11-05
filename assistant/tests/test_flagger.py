@@ -166,3 +166,16 @@ async def test_no_summaries_at_info_when_not_dry_run(memory, caplog):
     with caplog.at_level(logging.INFO):
         await go(FakeGateway([tx("t1")]), memory, Notifier())
     assert "SHOP" not in caplog.text
+
+
+async def test_dry_run_also_lists_pending_flags_from_an_earlier_run(memory, caplog):
+    memory.add_flag("big", "old", line("old"), NOW.isoformat())
+    notifier = Notifier()
+    with caplog.at_level(logging.INFO):
+        outcome = await go(FakeGateway([tx("new")]), memory, notifier, dry_run=True)
+    assert outcome.new_flags == 1
+    assert "dry run: still pending from an earlier run: " + line("old") in caplog.text
+    assert line("new") in caplog.text
+    assert notifier.sent == []
+    assert [f.key for f in memory.unnotified_flags()] == ["old"]
+    assert not memory.has_flag("big", "new")

@@ -8,6 +8,7 @@ import sys
 from argparse import Namespace
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -88,7 +89,8 @@ async def run_briefing(
         return now().astimezone(zone).date()
 
     flag_lines = None
-    if config.flagger_config_file:  # on/off switch only; the checks file is not read here
+    # On/off switch only: the checks file must be set and present, but it is never opened here.
+    if config.flagger_config_file and Path(config.flagger_config_file).exists():
 
         def flag_lines(since: datetime) -> list[str]:
             return [f.summary for f in memory.flags_since(since)]

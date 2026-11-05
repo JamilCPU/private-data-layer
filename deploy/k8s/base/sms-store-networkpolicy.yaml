@@ -11,10 +11,11 @@ spec:
     matchLabels: {app: sms-store}
   policyTypes: [Ingress]
   ingress:
+    # The k3s policy controller did not match the Traefik pod selector combined with the namespace
+    # selector (verified: 502 until removed), so the rule admits the kube-system namespace alone;
+    # other pods in `lab` stay blocked (verified) and the device token guards the endpoint itself.
     - from:
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: kube-system}
-          podSelector:
-            matchLabels: {app.kubernetes.io/name: traefik}
       ports:
         - {protocol: TCP, port: 8000}

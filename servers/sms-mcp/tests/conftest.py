@@ -10,7 +10,7 @@ from pdl_sms.models import Message
 
 PG_DSN_ENV = "TEST_PG_DSN"
 
-# Mirrors the table sms-store migrates; this package only reads it.
+# Mirrors servers/sms-store/migrations/001_sms.sql (columns, tsv expression); this package only reads it.
 PG_DDL = """
 DROP SCHEMA IF EXISTS sms CASCADE;
 CREATE SCHEMA sms;
@@ -18,7 +18,7 @@ CREATE TABLE sms.messages (
     id text PRIMARY KEY,
     device text NOT NULL,
     provider_id text NOT NULL,
-    thread_id text NOT NULL,
+    thread_id text,
     address text NOT NULL,
     contact text,
     direction text NOT NULL CHECK (direction IN ('in', 'out')),
@@ -26,7 +26,12 @@ CREATE TABLE sms.messages (
     sent_at timestamptz NOT NULL,
     received_at timestamptz NOT NULL,
     tsv tsvector GENERATED ALWAYS AS (
-        to_tsvector('simple', coalesce(contact, '') || ' ' || address || ' ' || body)
+        to_tsvector(
+            'simple',
+            coalesce(contact, '') || ' '
+            || regexp_replace(coalesce(address, ''), '[^[:alnum:]]+', ' ', 'g') || ' '
+            || coalesce(body, '')
+        )
     ) STORED
 );
 CREATE INDEX messages_tsv_idx ON sms.messages USING gin (tsv);

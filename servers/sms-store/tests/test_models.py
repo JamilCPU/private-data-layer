@@ -103,3 +103,20 @@ def test_missing_required_key_rejected():
     del r["date_ms"]
     with pytest.raises(ValidationError, match="date_ms"):
         parse_incoming("pixel", r, NOW)
+
+
+@pytest.mark.parametrize("field", ["body", "contact", "address", "thread_id", "provider_id"])
+def test_nul_bytes_are_stripped(field):
+    m = parse_incoming("pixel", raw(**{field: "a\x00b\x00"}), NOW)
+    assert "\x00" not in getattr(m, field)
+    assert getattr(m, field) == "ab"
+
+
+def test_nul_only_required_field_is_rejected_as_empty():
+    with pytest.raises(ValidationError) as exc:
+        parse_incoming("pixel", raw(address="\x00\x00"), NOW)
+    assert exc.value.field == "address"
+
+
+def test_nul_only_optional_field_becomes_none():
+    assert parse_incoming("pixel", raw(contact="\x00"), NOW).contact is None

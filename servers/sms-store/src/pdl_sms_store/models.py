@@ -42,6 +42,11 @@ def message_id(device: str, provider_id: str, date_ms: int) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
+def _text(value: str) -> str:
+    """Postgres ``text`` cannot hold NUL, so a phone-supplied one is dropped, not rejected."""
+    return value.replace("\x00", "")
+
+
 def _optional_text(raw: dict[str, Any], key: str, *, max_len: int) -> str | None:
     """Stripped string, or None when absent, null or blank."""
     value = raw.get(key)
@@ -49,7 +54,7 @@ def _optional_text(raw: dict[str, Any], key: str, *, max_len: int) -> str | None
         return None
     if not isinstance(value, str):
         raise ValidationError(key, "must be a string")
-    value = value.strip()
+    value = _text(value).strip()
     if len(value) > max_len:
         raise ValidationError(key, f"must be at most {max_len} characters")
     return value or None
@@ -59,6 +64,7 @@ def _required_text(raw: dict[str, Any], key: str, *, max_len: int, strip: bool) 
     value = raw.get(key)
     if not isinstance(value, str):
         raise ValidationError(key, "must be a string")
+    value = _text(value)
     if strip:
         value = value.strip()
     if not value:
@@ -90,6 +96,7 @@ def _body(raw: dict[str, Any]) -> str:
     body = raw.get("body")
     if not isinstance(body, str):
         raise ValidationError("body", "must be a string")
+    body = _text(body)
     if len(body) > MAX_TEXT_CHARS:
         return body[:MAX_TEXT_CHARS] + TRUNCATED_MARK
     return body

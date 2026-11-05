@@ -108,6 +108,20 @@ def case_like_wildcards_are_literal(store):
     assert store.search(None, None, "%", 10) == []
 
 
+def case_since_in_the_future_is_empty(store):
+    store.add([_msg(1), _msg(2)])
+    future = T0 + timedelta(days=365)
+    assert store.recent(future, 10) == []
+    assert store.search(None, future, None, 10) == []
+    assert store.search("body", future, None, 10) == []
+
+
+def case_one_character_query(store):
+    store.add([_msg(1, body="a b c"), _msg(2, body="zzz")])
+    assert [m.id for m in store.search("b", None, None, 10)] == ["id1"]
+    assert [m.id for m in store.search("Z", None, None, 10)] == ["id2"]
+
+
 CASES = [
     case_search_each_field_case_insensitive,
     case_blank_query_behaves_like_recent,
@@ -118,4 +132,6 @@ CASES = [
     case_round_trip_fields,
     case_substring_search_matches_inside_words,
     case_like_wildcards_are_literal,
+    case_since_in_the_future_is_empty,
+    case_one_character_query,
 ]

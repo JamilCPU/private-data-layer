@@ -17,6 +17,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /** Encrypts the store token at rest. Behind an interface so JVM tests can fake the Keystore. */
@@ -80,6 +81,21 @@ private val FP_KEY = stringPreferencesKey("ca_fingerprint")
 private val LAST_AT_KEY = longPreferencesKey("last_upload_at")
 private val LAST_RESULT_KEY = stringPreferencesKey("last_result")
 private val TOKEN_VALID_KEY = booleanPreferencesKey("token_valid")
+private val WM_DATE_KEY = longPreferencesKey("watermark_date_ms")
+private val WM_ID_KEY = longPreferencesKey("watermark_provider_id")
+
+/**
+ * Last forwarded SMS: texts strictly after (dateMs, providerId) have not been uploaded yet.
+ * Initialised to the pairing time so existing history is never uploaded on first pairing.
+ */
+data class Watermark(val dateMs: Long, val providerId: Long) {
+    fun advancedTo(dateMs: Long, providerId: Long): Watermark =
+        if (dateMs > this.dateMs || (dateMs == this.dateMs && providerId > this.providerId)) {
+            Watermark(dateMs, providerId)
+        } else {
+            this
+        }
+}
 
 /** Outcome of the most recent upload attempt, for the status screen. */
 data class UploadStatus(
@@ -116,6 +132,32 @@ class SettingsStore(
             it[TOKEN_KEY] = encrypted
             it[FP_KEY] = s.caFingerprint
             it[TOKEN_VALID_KEY] = true
+            if (it[WM_DATE_KEY] == null) {
+                it[WM_DATE_KEY] = System.currentTimeMillis()
+                it[WM_ID_KEY] = -1L
+            }
+        }
+    }
+
+    /** Null until the first pairing. Survives re-pairing (so a gap is caught up) but not [clear]. */
+    suspend fun watermark(): Watermark? {
+        val prefs = store.data.first()
+        val date = prefs[WM_DATE_KEY] ?: return null
+        return Watermark(date, prefs[WM_ID_KEY] ?: -1L)
+    }
+
+    suspend fun setWatermark(w: Watermark) {
+        store.edit {
+            it[WM_DATE_KEY] = w.dateMs
+            it[WM_ID_KEY] = w.providerId
+        }
+    }
+
+    /** Records a failed attempt without touching the last-successful-upload time. */
+    suspend fun recordFailure(result: String, tokenValid: Boolean) {
+        store.edit {
+            it[LAST_RESULT_KEY] = result
+            it[TOKEN_VALID_KEY] = tokenValid
         }
     }
 

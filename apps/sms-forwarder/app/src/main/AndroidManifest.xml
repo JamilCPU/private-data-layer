@@ -29,5 +29,16 @@
                 <data android:scheme="pdl-sms" android:host="pair" />
             </intent-filter>
         </activity>
+
+        <!-- exported=true is required to receive this system broadcast; BROADCAST_SMS restricts
+             senders to the system. The receiver only schedules an upload run. -->
+        <receiver
+            android:name=".sms.SmsReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

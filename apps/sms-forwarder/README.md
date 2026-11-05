@@ -2,7 +2,7 @@
 
 Android app that forwards the phone's text messages (incoming and existing) to your own
 `sms-store` service over pinned TLS. This is the app skeleton: pairing, pinned TLS, settings,
-upload client and a status screen. The SMS receiver and background sync arrive in a later task.
+upload client, a status screen, and the SMS forwarding pipeline described below.
 
 ## Permissions
 
@@ -30,6 +30,28 @@ Keystore key; the status screen shows only the store host, never the token. "Unp
 TLS trust is limited to that CA: the presented chain must contain a certificate with the pinned
 fingerprint, and the certificates before it must validate against it (PKIX). Hostname verification
 is the OkHttp default.
+
+## How forwarding works
+
+- `SmsReceiver` (`SMS_RECEIVED`) does nothing but start an immediate upload run. Every text is
+  therefore read from the SMS content provider and carries its provider `_id` as `provider_id`;
+  the sweep is the single source of truth, so a text seen by both the receiver trigger and a
+  periodic sweep is one queue row (the queue ignores a repeated `provider_id`).
+- `UploadWorker` runs every 15 minutes (network required), on every received text, and on
+  "Sync now". A run sweeps the provider for texts after the watermark (up to 500 per sweep,
+  repeated while full), resolves contact names, writes them to a Room queue, then uploads
+  batches of up to 100, oldest first, until the queue is empty.
+- **Watermark rule.** The watermark is the (`date`, `_id`) of the last text the store accepted.
+  It is initialised to the pairing time, so existing history is NOT uploaded on first pairing;
+  only texts arriving after pairing are forwarded. It advances only after a batch is accepted
+  (a `duplicates` reply still counts as accepted) and survives re-pairing, so a gap while the token
+  was revoked is caught up. Unpairing clears it.
+- **Offline / store errors.** The batch stays pending, the status shows `failed: <reason>`, and
+  WorkManager retries with its backoff. The next sweep never loses or duplicates anything.
+- **After revocation (401).** The token is marked invalid, the status shows "not paired", the run
+  stops without retrying, and nothing more is uploaded until the app is paired again. Queued texts
+  are kept and sent after re-pairing.
+- Sent rows stay in the queue table as a dedupe record; the server also dedupes on `provider_id`.
 
 ## Build (on the primary node)
 

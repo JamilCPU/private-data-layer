@@ -19,6 +19,9 @@ import com.jamilcpu.smsforwarder.data.displayHost
 import com.jamilcpu.smsforwarder.data.parsePairUri
 import com.jamilcpu.smsforwarder.ui.StatusScreen
 import com.jamilcpu.smsforwarder.ui.StatusState
+import com.jamilcpu.smsforwarder.sms.QueueDatabase
+import com.jamilcpu.smsforwarder.sms.RoomQueue
+import com.jamilcpu.smsforwarder.sms.UploadWorker
 import com.jamilcpu.smsforwarder.ui.SyncTrigger
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
@@ -32,7 +35,7 @@ private val REQUIRED_PERMISSIONS = arrayOf(
 class MainActivity : ComponentActivity() {
     private lateinit var settings: SettingsStore
     private var state by mutableStateOf(StatusState())
-    private var syncTrigger = SyncTrigger { }
+    private val syncTrigger = SyncTrigger { UploadWorker.enqueueNow(this) }
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refreshPermissions() }
@@ -50,7 +53,7 @@ class MainActivity : ComponentActivity() {
                         state = state,
                         onPair = ::pair,
                         onSync = { syncTrigger.syncNow() },
-                        onUnpair = { lifecycleScope.launch { settings.clear() } },
+                        onUnpair = ::unpair,
                         onRequestPermissions = { permissionLauncher.launch(REQUIRED_PERMISSIONS) },
                     )
                 }
@@ -72,8 +75,19 @@ class MainActivity : ComponentActivity() {
                     lastResult = status.lastResult,
                     tokenValid = status.tokenValid,
                 )
-            }.collect { state = it }
+            }.collect {
+                state = it.copy(queuedCount = queuedCount())
+                if (it.pairedHost != null) UploadWorker.schedulePeriodic(this@MainActivity)
+            }
         }
+    }
+
+    private suspend fun queuedCount(): Int =
+        RoomQueue(QueueDatabase.get(this).dao()).pendingCount()
+
+    private fun unpair() {
+        UploadWorker.cancelAll(this)
+        lifecycleScope.launch { settings.clear() }
     }
 
     private fun handlePairIntent(intent: Intent?) {

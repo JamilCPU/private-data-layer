@@ -26,3 +26,8 @@ system_prompt_extra: ""
 # briefing_retry_until: "10:00"
 # briefing_retry_interval_s: 900
 # briefing_news_count: 3
+# Flagger (hourly threshold checks): the checks file (see flagger.example.yaml), days of history
+# to scan, and whether to skip a run instead of degrading when the model is offline.
+# flagger_config_file: /etc/assistant/flagger.yaml
+# flagger_lookback_days: 45
+# flagger_require_brain: false

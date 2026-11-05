@@ -29,6 +29,7 @@ BANK_TOOL = "bank_search_transactions"
 TASTE_TOOL = "homestudio_get_taste_profile"
 SEARCH_TOOL = "search_web_search"
 NOTHING_NEW = "nothing new"
+FLAG_LINES_MAX = 5
 REASON_MAX_CHARS = 120
 FALLBACK_PHRASES = ("technology news today", "video game news today")
 PHRASE_MAX_CHARS = 80
@@ -107,12 +108,14 @@ class SectionRunner:
         today: Callable[[], date],
         news_count: int = 3,
         tool_timeout_s: float = 60,
+        flag_lines: Callable[[datetime], list[str]] | None = None,
     ) -> None:
         self._gateway = gateway
         self._llm = llm
         self._today = today
         self._news_count = news_count
         self._timeout = tool_timeout_s
+        self._flag_lines = flag_lines
 
     async def tool_names(self) -> frozenset[str] | None:
         """Names of the gateway's tools, or None when the gateway cannot be asked."""
@@ -141,7 +144,7 @@ class SectionRunner:
         if name not in TITLES:
             raise _Unavailable("unknown section")
         if name == "flags":
-            return SectionResult(name, NOT_CONNECTED[name], False)
+            return self._flags(since)
         if tools is None:
             tools = frozenset(spec.name for spec in await self._gateway.list_tools())
         if name == "texts" and SMS_TOOL not in tools:
@@ -158,6 +161,18 @@ class SectionRunner:
         result = await self._call(tool, args)
         summary = await self._summarise(name, INSTRUCTIONS[name], tool, result.text)
         return SectionResult(name, summary, True)
+
+    def _flags(self, since: datetime) -> SectionResult:
+        """The Flags line comes straight from stored flags: no model call, no tool call."""
+        if self._flag_lines is None:
+            return SectionResult("flags", NOT_CONNECTED["flags"], False)
+        lines = self._flag_lines(since)
+        if not lines:
+            return SectionResult("flags", "Flags: nothing new", True)
+        text = "Flags: " + "; ".join(lines[:FLAG_LINES_MAX])
+        if len(lines) > FLAG_LINES_MAX:
+            text += f" (and {len(lines) - FLAG_LINES_MAX} more)"
+        return SectionResult("flags", text, True)
 
     async def _call(self, tool: str, arguments: dict[str, Any]) -> ToolResult:
         result = await asyncio.wait_for(

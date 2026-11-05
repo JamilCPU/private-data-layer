@@ -1,0 +1,101 @@
+# Flagger: every hour at :05 it runs the rule-based checks from flagger.yaml (thresholds, watched
+# senders) through the gateway's read tools, stores the flags in the assistant's SQLite database
+# (shared with the assistant Deployment and the briefing through the same hostPath) and pushes ONE
+# ntfy notification when something new trips. Flags already stored never notify again.
+#
+# The checks come from the out-of-band ConfigMap `flagger-config` (key flagger.yaml, created from
+# assistant/flagger.example.yaml; see ../README.md "Flagger"). The pod waits in ContainerCreating
+# until that ConfigMap exists.
+#
+# The ownership of /data comes from the assistant Deployment's `own-data` init container, so that
+# Deployment must have run once before the first flagger job.
+#
+# Other out-of-band objects: Secret `ntfy-publish` and ConfigMap `briefing-config` (ntfy token and
+# topic, shared with the briefing), plus everything the assistant Deployment needs
+# (assistant-secrets, assistant-config, lab-ca).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: flagger
+  labels: {app: flagger}
+spec:
+  schedule: "5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels: {app: flagger}
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            role: primary-worker   # the SQLite database lives on this node's data disk
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: flagger
+              # The tag is a placeholder: the controller pins the built git sha in kustomization.yaml.
+              image: registry.lab/lab/pdl-assistant:latest
+              imagePullPolicy: Always
+              command: ["pdl-assistant-flagger"]
+              envFrom:
+                - configMapRef: {name: assistant-config}
+              env:
+                - {name: ASSISTANT_GATEWAY_URL, value: "http://gateway:8787"}
+                - {name: ASSISTANT_GATEWAY_PUBLIC_URL, value: "https://gateway.lab"}
+                - {name: SSL_CERT_FILE, value: /etc/pdl/ca/lab-ca.pem}
+                - {name: ASSISTANT_PUBLIC_URL, value: "https://assistant.lab"}
+                - {name: ASSISTANT_DB_PATH, value: /data/assistant.db}
+                - {name: ASSISTANT_SECRETS_FILE, value: /etc/pdl/assistant-secrets.yaml}
+                - {name: ASSISTANT_CLIENT_SECRET_FILE, value: /etc/pdl/client.secret}
+                - {name: ASSISTANT_NTFY_URL, value: "http://ntfy"}
+                - {name: ASSISTANT_NTFY_TOKEN_FILE, value: /etc/pdl/ntfy.token}
+                - name: ASSISTANT_NTFY_TOPIC
+                  valueFrom: {configMapKeyRef: {name: briefing-config, key: ASSISTANT_NTFY_TOPIC}}
+                - {name: ASSISTANT_FLAGGER_CONFIG_FILE, value: /etc/pdl/flagger/flagger.yaml}
+              resources:
+                requests: {cpu: 50m, memory: 128Mi}
+                limits: {memory: 512Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              volumeMounts:
+                - {name: secrets, mountPath: /etc/pdl/assistant-secrets.yaml, subPath: secrets.yaml, readOnly: true}
+                - {name: secrets, mountPath: /etc/pdl/client.secret, subPath: client.secret, readOnly: true}
+                - {name: ntfy-token, mountPath: /etc/pdl/ntfy.token, subPath: token, readOnly: true}
+                - {name: lab-ca, mountPath: /etc/pdl/ca, readOnly: true}
+                - {name: data, mountPath: /data}
+                - {name: tmp, mountPath: /tmp}
+                - {name: flagger-config, mountPath: /etc/pdl/flagger, readOnly: true}
+          volumes:
+            - name: secrets
+              secret:
+                secretName: assistant-secrets
+                defaultMode: 0440
+                items:
+                  - {key: secrets.yaml, path: secrets.yaml}
+                  - {key: client.secret, path: client.secret}
+            - name: ntfy-token
+              secret:
+                secretName: ntfy-publish
+                defaultMode: 0440
+                items:
+                  - {key: token, path: token}
+            - name: lab-ca
+              configMap: {name: lab-ca}
+            - name: data
+              hostPath: {path: /data/lab/private-data-layer/assistant, type: DirectoryOrCreate}
+            - name: tmp
+              emptyDir: {}
+            - name: flagger-config
+              configMap: {name: flagger-config}

@@ -19,6 +19,7 @@ dependencies = [
 pdl-assistant = "pdl_assistant.__main__:main"
 pdl-assistant-new-api-token = "pdl_assistant.cli_tokens:new_api_token"
 pdl-assistant-briefing = "pdl_assistant.cli_briefing:main"
+pdl-assistant-flagger = "pdl_assistant.cli_flagger:main"
 
 [dependency-groups]
 dev = [

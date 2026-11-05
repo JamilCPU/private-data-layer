@@ -6,10 +6,10 @@ through a small [MCP](https://modelcontextprotocol.io) server, one **gateway** d
 which tools exist, and a local assistant is the first agent on top of it. No personal data,
 inference or credentials leave the owner's machines.
 
-**Status:** build steps 1-4 of 6 are complete: the gateway with the Home Studio and Automations
-backends (1), the assistant (2), `bank-mcp` and `email-mcp` (3), and `search-mcp` on SearXNG with
-the morning briefing pushed through ntfy (4). Steps 5-6 are planned: `sms-mcp` and the
-rule-based flagger.
+**Status:** build steps 1-6 of 6 are complete: the gateway with the Home Studio and Automations
+backends (1), the assistant (2), `bank-mcp` and `email-mcp` (3), `search-mcp` on SearXNG with
+the morning briefing pushed through ntfy (4), `sms-mcp` (5), and the flagger (6): hourly
+threshold checks, with one notification per run listing the new flags.
 
 ## Architecture
 
@@ -48,8 +48,10 @@ rule-based flagger.
   against Postgres in CI.
 - **Assistant** (`assistant/`): a small harness around a local Ollama model, itself an OAuth
   client of the gateway, so it sees only the tools its grant allows. Chat and the morning
-  briefing are built; the rule-based flagger comes in step 6. A Kubernetes CronJob runs the
+  briefing are built. A Kubernetes CronJob runs the
   briefing every morning, and it is pushed to the owner's phone through a self-hosted ntfy server.
+  A second, hourly CronJob runs the rule-based flagger, which stores a flag for each tripped
+  threshold and sends one notification per run that lists the new flags (up to 10 lines; the rest stay in the database and the notification says how many more). The morning briefing's Flags section lists the flags raised since the previous briefing (up to 5).
 
 Design document: [`docs/superpowers/specs/2026-11-02-private-data-layer-design.md`](docs/superpowers/specs/2026-11-02-private-data-layer-design.md).
 Implementation plans and verification notes: [`docs/superpowers/plans/`](docs/superpowers/plans/).

@@ -8,6 +8,7 @@ import sys
 from argparse import Namespace
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -87,12 +88,20 @@ async def run_briefing(
     def today() -> date:
         return now().astimezone(zone).date()
 
+    flag_lines = None
+    # On/off switch only: the checks file must be set and present, but it is never opened here.
+    if config.flagger_config_file and Path(config.flagger_config_file).exists():
+
+        def flag_lines(since: datetime) -> list[str]:
+            return [f.summary for f in memory.flags_since(since)]
+
     sections = SectionRunner(
         gateway,
         llm,
         today=today,
         news_count=config.briefing_news_count,
         tool_timeout_s=config.tool_timeout_s,
+        flag_lines=flag_lines,
     )
     text = ""
     try:

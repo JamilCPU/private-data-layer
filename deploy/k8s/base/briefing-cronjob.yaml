@@ -62,6 +62,9 @@ spec:
                 - name: ASSISTANT_BRIEFING_TIMEZONE
                   valueFrom:
                     configMapKeyRef: {name: briefing-config, key: ASSISTANT_BRIEFING_TIMEZONE, optional: true}
+                # On/off switch for the briefing's Flags section: the briefing only reads the stored
+                # flags and never loads this file, so the ConfigMap volume below is optional.
+                - {name: ASSISTANT_FLAGGER_CONFIG_FILE, value: /etc/pdl/flagger/flagger.yaml}
               resources:
                 requests: {cpu: 50m, memory: 128Mi}
                 limits: {memory: 512Mi}
@@ -76,6 +79,7 @@ spec:
                 - {name: lab-ca, mountPath: /etc/pdl/ca, readOnly: true}
                 - {name: data, mountPath: /data}
                 - {name: tmp, mountPath: /tmp}
+                - {name: flagger-config, mountPath: /etc/pdl/flagger, readOnly: true}
           volumes:
             - name: secrets
               secret:
@@ -96,3 +100,6 @@ spec:
               hostPath: {path: /data/lab/private-data-layer/assistant, type: DirectoryOrCreate}
             - name: tmp
               emptyDir: {}
+            # Optional so the briefing still starts when the flagger is not configured.
+            - name: flagger-config
+              configMap: {name: flagger-config, optional: true}

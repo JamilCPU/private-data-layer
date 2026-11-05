@@ -131,3 +131,13 @@ docs/superpowers/plans/2026-11-04-step6-verification.md
 - Spec 5.3 Flagger (named checks, thresholds in config, speaks only when tripped, no free-form detection) → Tasks 1–3; Delivery (ntfy) → Task 3; Memory (flag history) → Task 1; "anything the flagger raised" in the briefing → Task 3; hourly schedule → Task 4; step 6 done criterion → Review Focus 1 and Task 5. The offline rule is the one recorded deviation (Global Constraints).
 - Names consistent: `TransactionOver`, `RecurringChange`, `EmailFrom`, `load_checks`, `FlaggerConfigError`, `StoredFlag`, `add_flag`, `unnotified_flags`, `mark_flags_notified`, `flags_since`, `Flag`, `CheckError`, `evaluate`, `evaluate_all`, `run_flagger`, `FlaggerOutcome`.
 - Execution order: Task 1 with Task 4 in parallel (different trees), then 2, then 3, then 5. Reviewers: opus for Tasks 2 and 3; sonnet for 1 and 4.
+
+## Amendments during execution
+
+The task text above is the plan as written; these decisions replaced parts of it while it ran.
+
+- **Recurring-change detection moved into bank-mcp.** The planned per-row search by description could not find a charge whose description differs from the group's normalised merchant key, and it flagged the same price change on every later charge. `bank_recurring_charges` now returns, for each recurring group, a `changed` list holding the first newer charge from the same merchant at a different amount. The flagger makes one tool call and keys the flag on that charge's id, so a price change is flagged once.
+- **`MAX_RECURRING` removed.** With one tool call there is nothing to bound, and slicing the rows before reading `changed` hid exactly the groups whose price had changed.
+- **Transaction rows carry `id`.** The flag key for a transaction is its stored id.
+- **The briefing's Flags section** is switched on only when the configured checks file exists.
+- **Known limitations, documented in the READMEs:** a merchant that bills a subscription and one-off purchases under the same description can raise a single false flag; a crash between sending a notification and marking its flags can repeat that one notification once.

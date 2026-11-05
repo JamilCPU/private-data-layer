@@ -24,7 +24,8 @@ data class QueuedMessage(
     val address: String,
     val contact: String?,
     val direction: String,
-    val body: String,
+    /** Nulled once sent: dedupe needs only the key. */
+    val body: String?,
     @ColumnInfo(name = "thread_id") val threadId: String?,
     val state: String = STATE_PENDING,
     val attempts: Int = 0,
@@ -37,11 +38,12 @@ interface QueueDao {
 
     @Query(
         "SELECT * FROM queued_messages WHERE state = 'pending' " +
-            "ORDER BY date_ms ASC, CAST(provider_id AS INTEGER) ASC LIMIT :limit",
+            "ORDER BY date_ms ASC, " +
+            "CAST(substr(provider_id, 1, instr(provider_id, '-') - 1) AS INTEGER) ASC LIMIT :limit",
     )
     suspend fun pending(limit: Int): List<QueuedMessage>
 
-    @Query("UPDATE queued_messages SET state = 'sent' WHERE provider_id IN (:ids)")
+    @Query("UPDATE queued_messages SET state = 'sent', body = NULL WHERE provider_id IN (:ids)")
     suspend fun markSent(ids: List<String>)
 
     @Query("UPDATE queued_messages SET state = 'failed', attempts = attempts + 1 WHERE provider_id IN (:ids)")
@@ -49,9 +51,15 @@ interface QueueDao {
 
     @Query("SELECT COUNT(*) FROM queued_messages WHERE state = 'pending'")
     suspend fun pendingCount(): Int
+
+    @Query("SELECT provider_id FROM queued_messages WHERE provider_id IN (:ids)")
+    suspend fun known(ids: List<String>): List<String>
+
+    @Query("DELETE FROM queued_messages")
+    suspend fun clear()
 }
 
-@Database(entities = [QueuedMessage::class], version = 1, exportSchema = false)
+@Database(entities = [QueuedMessage::class], version = 2, exportSchema = false)
 abstract class QueueDatabase : RoomDatabase() {
     abstract fun dao(): QueueDao
 
@@ -64,7 +72,7 @@ abstract class QueueDatabase : RoomDatabase() {
                     context.applicationContext,
                     QueueDatabase::class.java,
                     "sms_queue.db",
-                ).build().also { instance = it }
+                ).fallbackToDestructiveMigration().build().also { instance = it }
             }
     }
 }
@@ -82,6 +90,11 @@ class RoomQueue(private val dao: QueueDao) : Queue {
 
     override suspend fun pendingCount(): Int = dao.pendingCount()
 
+    override suspend fun known(ids: List<String>): Set<String> =
+        ids.chunked(SQL_CHUNK).flatMap { dao.known(it) }.toSet()
+
+    override suspend fun clear() = dao.clear()
+
     private companion object {
         const val SQL_CHUNK = 500
     }
@@ -91,4 +104,4 @@ private fun OutgoingMessage.toEntity() =
     QueuedMessage(providerId, dateMs, address, contact, direction, body, threadId)
 
 private fun QueuedMessage.toOutgoing() =
-    OutgoingMessage(providerId, dateMs, address, contact, direction, body, threadId)
+    OutgoingMessage(providerId, dateMs, address, contact, direction, body.orEmpty(), threadId)

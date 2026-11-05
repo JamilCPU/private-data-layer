@@ -12,6 +12,13 @@ class SmsReaderTest {
     }
 
     @Test
+    fun `provider key combines id and date`() {
+        val r = rowToRaw(5, 9, "+4912", 1000, 1, "hi")!!
+        assertEquals("5-1000", r.key)
+        assertEquals(5L, keyId(r.key))
+    }
+
+    @Test
     fun `sent maps to out`() {
         assertEquals("out", rowToRaw(6, null, "+4912", 2000, 2, "yo")?.direction)
     }

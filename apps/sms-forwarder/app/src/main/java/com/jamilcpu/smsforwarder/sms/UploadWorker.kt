@@ -10,14 +10,17 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import com.jamilcpu.smsforwarder.data.OutgoingMessage
 import com.jamilcpu.smsforwarder.data.SettingsStore
 import com.jamilcpu.smsforwarder.data.UploadApi
 import com.jamilcpu.smsforwarder.data.Watermark
 import com.jamilcpu.smsforwarder.data.buildPinnedUploadClient
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
@@ -28,16 +31,18 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         val client = buildPinnedUploadClient(config)
         try {
             val api = UploadApi(client, config)
+            val queue = RoomQueue(QueueDatabase.get(applicationContext).dao())
             val runner = UploadRunner(
-                queue = RoomQueue(QueueDatabase.get(applicationContext).dao()),
+                queue = queue,
                 uploader = { api.post(it) },
                 state = SettingsRunnerState(settings),
-                sweeper = ResolverSweeper(applicationContext),
+                sweeper = resolverSweeper(applicationContext, queue),
                 clock = System::currentTimeMillis,
             )
-            return when (runner.run()) {
+            // One run at a time in this process: no double posts, no interleaved watermark writes.
+            return when (runLock.withLock { runner.run() }) {
                 RunOutcome.Retry -> Result.retry()
-                RunOutcome.Done, RunOutcome.Unauthorized -> Result.success()
+                RunOutcome.Done, RunOutcome.Unauthorized, RunOutcome.MissingPermission -> Result.success()
             }
         } finally {
             client.close()
@@ -48,6 +53,13 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         private const val PERIODIC_NAME = "sms-sweep"
         private const val NOW_NAME = "sms-sweep-now"
         private const val PERIOD_MINUTES = 15L
+
+        private val runLock = Mutex()
+
+        /** Empties the queue between runs (unpair, new pairing). */
+        suspend fun clearQueue(context: Context) = runLock.withLock {
+            RoomQueue(QueueDatabase.get(context).dao()).clear()
+        }
 
         private fun network() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 
@@ -74,28 +86,20 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     }
 }
 
-/** Sweeps the SMS provider and attaches contact names. */
-class ResolverSweeper(private val context: Context) : Sweeper {
-    override suspend fun sweep(after: Watermark): List<OutgoingMessage> {
-        val resolver = context.contentResolver
-        return SmsReader.readSince(resolver, after.dateMs, after.providerId).map {
-            OutgoingMessage(
-                providerId = it.id.toString(),
-                dateMs = it.dateMs,
-                address = it.address,
-                contact = ContactResolver.name(resolver, it.address),
-                direction = it.direction,
-                body = it.body,
-                threadId = it.threadId?.toString(),
-            )
-        }
-    }
+/** Look-back sweep over the SMS provider; provider and contact queries run on the IO dispatcher. */
+fun resolverSweeper(context: Context, queue: Queue): Sweeper {
+    val resolver = context.contentResolver
+    return LookbackSweeper(
+        pages = { since, afterId -> withContext(Dispatchers.IO) { SmsReader.readSince(resolver, since, afterId) } },
+        queue = queue,
+        contact = { address -> withContext(Dispatchers.IO) { ContactResolver.name(resolver, address) } },
+    )
 }
 
 class SettingsRunnerState(private val settings: SettingsStore) : RunnerState {
     // A paired app always has a watermark; the fallback is "now" so history is never uploaded.
     override suspend fun watermark(): Watermark =
-        settings.watermark() ?: Watermark(System.currentTimeMillis(), -1L).also { settings.setWatermark(it) }
+        settings.watermark() ?: System.currentTimeMillis().let { Watermark(it, -1L, it) }.also { settings.setWatermark(it) }
 
     override suspend fun setWatermark(w: Watermark) = settings.setWatermark(w)
 

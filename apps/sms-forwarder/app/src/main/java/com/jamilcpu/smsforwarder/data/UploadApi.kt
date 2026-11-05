@@ -62,7 +62,11 @@ class UploadApi(private val client: HttpClient, settings: StoreSettings) {
         when (response.status) {
             HttpStatusCode.OK -> parseReply(response.bodyAsText())
             HttpStatusCode.Unauthorized -> UploadResult.Unauthorized
-            else -> UploadResult.Failed("Store replied ${response.status.value}")
+            HttpStatusCode.TooManyRequests -> UploadResult.RateLimited
+            else -> {
+                val code = response.status.value
+                if (code in 400..499) UploadResult.Rejected(code) else UploadResult.Failed("Store replied $code")
+            }
         }
 
     private fun parseReply(text: String): UploadResult =

@@ -32,6 +32,11 @@ def test_malformed_hash_is_false(bad):
     assert verify_token("tok", bad) is False
 
 
+def test_lone_surrogate_token_is_false_not_error():
+    h = hash_token("tok", iterations=5)
+    assert verify_token("bad" + chr(0xD800) + "token", h) is False
+
+
 def test_verify_uses_constant_time_compare(monkeypatch):
     calls = []
     real = hmac.compare_digest

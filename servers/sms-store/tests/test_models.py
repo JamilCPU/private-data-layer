@@ -78,6 +78,26 @@ def test_bad_fields_rejected(override, field):
     assert str(exc.value) == f"{field}: {exc.value.reason}"
 
 
+@pytest.mark.parametrize("bad", [10**15, 10**20, 2**62, 4_102_444_800_001])
+def test_date_ms_out_of_range_rejected(bad):
+    with pytest.raises(ValidationError) as exc:
+        parse_incoming("pixel", raw(date_ms=bad), NOW)
+    assert (exc.value.field, exc.value.reason) == ("date_ms", "out of range")
+
+
+def test_date_ms_upper_bound_accepted():
+    assert parse_incoming("pixel", raw(date_ms=4_102_444_800_000), NOW).sent_at.year == 2100
+
+
+@pytest.mark.parametrize("blank", ["", "   ", " 	 "])
+def test_blank_thread_id_becomes_none(blank):
+    assert parse_incoming("pixel", raw(thread_id=blank), NOW).thread_id is None
+
+
+def test_thread_id_is_stripped():
+    assert parse_incoming("pixel", raw(thread_id=" 7 "), NOW).thread_id == "7"
+
+
 def test_missing_required_key_rejected():
     r = raw()
     del r["date_ms"]

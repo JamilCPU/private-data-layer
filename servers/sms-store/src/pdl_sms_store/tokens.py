@@ -51,9 +51,9 @@ def verify_token(token: str, hashed: str) -> bool:
         if algorithm != _ALGORITHM or iterations < 1:
             return False
         salt, expected = _b64d(salt_text), _b64d(digest_text)
+        actual = hashlib.pbkdf2_hmac("sha256", token.encode("utf-8"), salt, iterations)
     except (ValueError, binascii.Error):
         return False
-    actual = hashlib.pbkdf2_hmac("sha256", token.encode("utf-8"), salt, iterations)
     return hmac.compare_digest(actual, expected)
 
 

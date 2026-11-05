@@ -12,6 +12,7 @@ TRUNCATED_MARK = " [truncated]"
 MAX_ID_CHARS = 64
 MAX_ADDRESS_CHARS = 64
 MAX_CONTACT_CHARS = 128
+MAX_DATE_MS = 4_102_444_800_000  # 2100-01-01 UTC
 
 
 class ValidationError(Exception):
@@ -41,14 +42,26 @@ def message_id(device: str, provider_id: str, date_ms: int) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
-def _text(raw: dict[str, Any], key: str, *, max_len: int, required: bool = True) -> str | None:
+def _optional_text(raw: dict[str, Any], key: str, *, max_len: int) -> str | None:
+    """Stripped string, or None when absent, null or blank."""
     value = raw.get(key)
-    if value is None and not required:
+    if value is None:
         return None
     if not isinstance(value, str):
         raise ValidationError(key, "must be a string")
-    value = value.strip() if key in ("address", "contact") else value
-    if required and not value:
+    value = value.strip()
+    if len(value) > max_len:
+        raise ValidationError(key, f"must be at most {max_len} characters")
+    return value or None
+
+
+def _required_text(raw: dict[str, Any], key: str, *, max_len: int, strip: bool) -> str:
+    value = raw.get(key)
+    if not isinstance(value, str):
+        raise ValidationError(key, "must be a string")
+    if strip:
+        value = value.strip()
+    if not value:
         raise ValidationError(key, "must not be empty")
     if len(value) > max_len:
         raise ValidationError(key, f"must be at most {max_len} characters")
@@ -61,7 +74,16 @@ def _date_ms(raw: dict[str, Any]) -> int:
         raise ValidationError("date_ms", "must be an integer")
     if value < 0:
         raise ValidationError("date_ms", "must not be negative")
+    if value > MAX_DATE_MS:
+        raise ValidationError("date_ms", "out of range")
     return value
+
+
+def _sent_at(date_ms: int) -> datetime:
+    try:
+        return datetime.fromtimestamp(date_ms / 1000, UTC)
+    except (OverflowError, OSError, ValueError) as exc:
+        raise ValidationError("date_ms", "out of range") from exc
 
 
 def _body(raw: dict[str, Any]) -> str:
@@ -75,15 +97,14 @@ def _body(raw: dict[str, Any]) -> str:
 
 def parse_incoming(device: str, raw: dict[str, Any], received_at: datetime) -> Message:
     """Validate one device-supplied message dict; raise ``ValidationError`` on bad input."""
-    provider_id = _text(raw, "provider_id", max_len=MAX_ID_CHARS)
+    provider_id = _required_text(raw, "provider_id", max_len=MAX_ID_CHARS, strip=False)
     date_ms = _date_ms(raw)
-    address = _text(raw, "address", max_len=MAX_ADDRESS_CHARS)
-    contact = _text(raw, "contact", max_len=MAX_CONTACT_CHARS, required=False) or None
-    thread_id = _text(raw, "thread_id", max_len=MAX_ID_CHARS, required=False)
+    address = _required_text(raw, "address", max_len=MAX_ADDRESS_CHARS, strip=True)
+    contact = _optional_text(raw, "contact", max_len=MAX_CONTACT_CHARS)
+    thread_id = _optional_text(raw, "thread_id", max_len=MAX_ID_CHARS)
     direction = raw.get("direction")
     if direction not in ("in", "out"):
         raise ValidationError("direction", "must be 'in' or 'out'")
-    assert provider_id is not None and address is not None  # required fields
     return Message(
         id=message_id(device, provider_id, date_ms),
         device=device,
@@ -93,6 +114,6 @@ def parse_incoming(device: str, raw: dict[str, Any], received_at: datetime) -> M
         contact=contact,
         direction=direction,
         body=_body(raw),
-        sent_at=datetime.fromtimestamp(date_ms / 1000, UTC),
+        sent_at=_sent_at(date_ms),
         received_at=received_at,
     )

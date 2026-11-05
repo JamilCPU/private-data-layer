@@ -272,3 +272,7 @@ def test_model_think_env_values(tmp_path: Path, raw: str, expected: bool) -> Non
 def test_model_think_rejects_other_text(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="model_think"):
         load_config(_write(tmp_path, _yaml()), {"ASSISTANT_MODEL_THINK": "sometimes"})
+
+
+def test_model_think_yaml_bool(tmp_path: Path) -> None:
+    assert load_config(_write(tmp_path, _yaml(model_think=False)), {}).model_think is False

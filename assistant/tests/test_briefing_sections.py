@@ -329,3 +329,38 @@ async def test_traceback_only_for_unexpected_errors(caplog: pytest.LogCaptureFix
     with caplog.at_level("WARNING"):
         await _runner(boom, FakeLlm([])).run("email", SINCE)
     assert caplog.records[0].exc_info is not None
+
+
+async def test_flags_nothing_new():
+    runner = _runner(FakeGateway({}), FakeLlm([]), flag_lines=lambda since: [])
+    result = await runner.run("flags", SINCE)
+    assert (result.text, result.available) == ("Flags: nothing new", True)
+
+
+async def test_flags_lists_summaries_without_model_or_tool_calls():
+    seen = []
+
+    def lines(since):
+        seen.append(since)
+        return ["a: one", "b: two"]
+
+    gateway, llm = FakeGateway({}), FakeLlm([])
+    result = await _runner(gateway, llm, flag_lines=lines).run("flags", SINCE)
+    assert result.text == "Flags: a: one; b: two"
+    assert seen == [SINCE]
+    assert gateway.calls == [] and llm.calls == []
+
+
+async def test_flags_caps_at_five_with_more_count():
+    runner = _runner(FakeGateway({}), FakeLlm([]), flag_lines=lambda s: [f"f{i}" for i in range(8)])
+    result = await runner.run("flags", SINCE)
+    assert result.text == "Flags: f0; f1; f2; f3; f4 (and 3 more)"
+
+
+async def test_flags_survive_gateway_outage_with_flag_lines():
+    class Down(FakeGateway):
+        async def list_tools(self) -> list[ToolSpec]:
+            raise OSError("down")
+
+    result = await _runner(Down({}), FakeLlm([]), flag_lines=lambda s: ["x"]).run("flags", SINCE)
+    assert result.text == "Flags: x"

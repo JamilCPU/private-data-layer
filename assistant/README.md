@@ -77,6 +77,34 @@ Exit codes: 0 sent or skipped, 1 failed or bad configuration, 2 `--now` with the
 4. Subscribe to the topic (`briefing` by default, `ntfy_topic`).
 5. Check with `pdl-assistant-briefing --test-notification`.
 
+## Flagger
+
+`pdl-assistant-flagger` runs your threshold checks against the gateway and pushes a notification for each new flag. It is meant to run hourly. It makes no model call and runs whether or not the model server is up.
+
+Set `flagger_config_file` to a YAML file of checks (see `flagger.example.yaml`). Three check types:
+
+```yaml
+checks:
+  - name: large-transaction
+    type: transaction_over
+    amount: 500
+    direction: spend        # or "any"
+  - name: recurring-change
+    type: recurring_change
+    percent: 20
+  - name: watched-sender
+    type: email_from
+    senders: [billing@example.com]
+```
+
+- **No repeats.** Each flag is identified by its check name and a key (the transaction or email id). Flags are stored in the assistant's SQLite database (the `flags` table in `db_path`); a flag is pushed once, and a push that fails stays pending and is retried, together with any new flags, on the next run. A notification shows at most 10 lines, then "and N more"; every pending flag counts as sent.
+- **Lookback.** Checks scan the last `flagger_lookback_days` days (default 45).
+- **`--dry-run`.** Evaluates the checks and logs what would be recorded and sent; writes nothing and sends nothing.
+- **Offline model.** The flagger does not need the model. With `flagger_require_brain: true` it probes the model first and skips the run silently (exit 0) when it is offline, which is the original design's rule.
+- **Briefing.** When `flagger_config_file` is set, the morning briefing's Flags line lists the flags raised since the last briefing (no model call).
+
+Exit codes: 0 quiet, notified or skipped; 1 for a failed push, every check failing, or bad configuration.
+
 ## Container
 
 The image (`ghcr.io/jamilcpu/pdl-assistant`) runs as uid 10001, listens on 8790, keeps state under `/data` and has a health check on `/healthz` (set `ASSISTANT_PORT` if you change `listen_port`). For the cluster deployment, see `deploy/k8s/README.md`.

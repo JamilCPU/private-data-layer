@@ -28,6 +28,9 @@ namespace search path, so the assistant now calls the gateway over the in-cluste
 
 ## Pending
 
+Update 2026-11-05: the live model run is done, see `2026-11-05-live-model-verification.md`. The
+first item below is kept as written at the time.
+
 - The live model run (plan Task 9): "what did I listen to this week?" answered from Home Studio
   data through the gateway. Needs either the workstation firewall to allow inbound 11434 from the
   LAN (then the in-cluster assistant works as deployed) or a GPU window for a local run of the

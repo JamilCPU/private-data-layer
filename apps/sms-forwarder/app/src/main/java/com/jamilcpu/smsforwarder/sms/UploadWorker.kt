@@ -18,12 +18,16 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result =
+        // One run at a time in this process, and pairing changes take the same lock. The settings are
+        // read inside it, so a run queued behind an unpair or re-pair sees the new state.
+        ForwardingLock.mutex.withLock { runLocked() }
+
+    private suspend fun runLocked(): Result {
         val settings = SettingsStore(applicationContext)
         val config = settings.flow.firstOrNull() ?: return Result.success()
         if (!settings.status.first().tokenValid) return Result.success()
@@ -39,8 +43,7 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 sweeper = resolverSweeper(applicationContext, queue),
                 clock = System::currentTimeMillis,
             )
-            // One run at a time in this process: no double posts, no interleaved watermark writes.
-            return when (runLock.withLock { runner.run() }) {
+            return when (runner.run()) {
                 RunOutcome.Retry -> Result.retry()
                 RunOutcome.Done, RunOutcome.Unauthorized, RunOutcome.MissingPermission -> Result.success()
             }
@@ -53,13 +56,6 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         private const val PERIODIC_NAME = "sms-sweep"
         private const val NOW_NAME = "sms-sweep-now"
         private const val PERIOD_MINUTES = 15L
-
-        private val runLock = Mutex()
-
-        /** Empties the queue between runs (unpair, new pairing). */
-        suspend fun clearQueue(context: Context) = runLock.withLock {
-            RoomQueue(QueueDatabase.get(context).dao()).clear()
-        }
 
         private fun network() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
 

@@ -7,12 +7,12 @@ import androidx.compose.runtime.Composable
 import com.jamilcpu.smsforwarder.data.PendingPairing
 
 @Composable
-fun PairConfirmDialog(pending: PendingPairing, onConfirm: () -> Unit, onCancel: () -> Unit) {
+fun PairConfirmDialog(pending: PendingPairing, onConfirm: () -> Unit, onCancel: () -> Unit, busy: Boolean = false) {
     AlertDialog(
-        onDismissRequest = onCancel,
+        onDismissRequest = { if (!busy) onCancel() },
         title = { Text("Confirm pairing") },
         text = { Text(pending.message) },
-        confirmButton = { TextButton(onClick = onConfirm) { Text("Pair") } },
-        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+        confirmButton = { TextButton(onClick = onConfirm, enabled = !busy) { Text(if (busy) "Pairing…" else "Pair") } },
+        dismissButton = { TextButton(onClick = onCancel, enabled = !busy) { Text("Cancel") } },
     )
 }

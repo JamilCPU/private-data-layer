@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -26,6 +29,8 @@ SECURITY_HEADERS = {
     "referrer-policy": "no-referrer",
 }
 _BEARER = "bearer "
+_TOKEN_SHAPE = re.compile(r"[A-Za-z0-9_-]{32,128}")
+CACHE_PER_DEVICE = 4
 
 
 class _BodyTooLarge(Exception):
@@ -103,6 +108,17 @@ def _client_key(request: Request) -> str:
     return f"ip:{request.client.host}" if request.client else "ip:unknown"
 
 
+def _last_provider_id(msgs: list[Message]) -> str:
+    ids = [m.provider_id for m in msgs]
+    if all(i.isascii() and i.isdigit() for i in ids):
+        return max(ids, key=int)
+    return max(ids)
+
+
+def _token_key(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 class _Receiver:
     def __init__(
         self,
@@ -112,16 +128,42 @@ class _Receiver:
         rate: RateLimiter,
     ) -> None:
         self._store, self._devices, self._now, self._rate = store, devices, now, rate
+        self._verified: dict[str, str] = {}
+        self._cache_max = max(1, len(devices) * CACHE_PER_DEVICE)
+
+    def _remember(self, token: str, device: str) -> None:
+        if len(self._verified) >= self._cache_max:
+            self._verified.pop(next(iter(self._verified)))
+        self._verified[_token_key(token)] = device
+
+    def _limited(self, key: str, device: str | None) -> Response | None:
+        if self._rate.allow(key):
+            return None
+        wait = str(self._rate.retry_after(key))
+        return _error(429, "rate limited", device=device, headers={"retry-after": wait})
+
+    async def _authenticate(self, request: Request) -> tuple[str | None, Response | None]:
+        """Return (device, None) or (None, error response); hash only after the IP limiter."""
+        token = _bearer_token(request)
+        if token is None or _TOKEN_SHAPE.fullmatch(token) is None:
+            return None, _error(401, "unauthorized")
+        device = self._verified.get(_token_key(token))
+        if device is None:
+            limited = self._limited(_client_key(request), None)
+            if limited is not None:
+                return None, limited
+            device = await run_in_threadpool(find_device, token, self._devices)
+            if device is None:
+                return None, _error(401, "unauthorized")
+            self._remember(token, device)
+        limited = self._limited(f"device:{device}", device)
+        return (None, limited) if limited is not None else (device, None)
 
     async def post_messages(self, request: Request) -> Response:
-        token = _bearer_token(request)
-        device = find_device(token, self._devices) if token else None
-        key = f"device:{device}" if device else _client_key(request)
-        if not self._rate.allow(key):
-            wait = str(self._rate.retry_after(key))
-            return _error(429, "rate limited", device=device, headers={"retry-after": wait})
+        device, failure = await self._authenticate(request)
         if device is None:
-            return _error(401, "unauthorized")
+            assert failure is not None
+            return failure
         try:
             msgs = _parse_all(device, _decode_batch(await _read_body(request)), self._now())
         except _BodyTooLarge:
@@ -133,10 +175,10 @@ class _Receiver:
     def _store_messages(self, device: str, msgs: list[Message]) -> Response:
         try:
             new = self._store.upsert_messages(msgs)
-            last_id = max(m.provider_id for m in msgs)
+            last_id = _last_provider_id(msgs)
             self._store.record_device_seen(device, self._now(), last_id)
-        except Exception:
-            log.exception("store failure for device=%s", device)
+        except Exception as exc:  # noqa: BLE001 - any store failure maps to a 500
+            log.error("store failure device=%s error=%s", device, type(exc).__name__)
             return _error(500, "store error", device=device, count=len(msgs))
         payload = {"accepted": new, "duplicates": len(msgs) - new}
         return _reply(200, payload, device=device, count=len(msgs))
@@ -152,6 +194,11 @@ class _Receiver:
         return _error(404, "not found")
 
 
+async def _unexpected(request: Request, exc: Exception) -> Response:
+    log.error("unexpected error=%s", type(exc).__name__)
+    return _error(500, "store error")
+
+
 def build_app(
     store: Store,
     devices: Mapping[str, str],
@@ -165,4 +212,4 @@ def build_app(
         receiver.dispatch,
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     )
-    return Starlette(routes=[route])
+    return Starlette(routes=[route], exception_handlers={Exception: _unexpected})

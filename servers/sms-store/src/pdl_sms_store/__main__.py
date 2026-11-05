@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
         store = store_from_env(os.environ)
     except (TokensError, StoreConfigError, psycopg.Error) as exc:
         return _error(str(exc))
-    uvicorn.run(build_app(store, devices), host=host, port=port)
+    uvicorn.run(build_app(store, devices), host=host, port=port, access_log=False)
     return 0
 
 

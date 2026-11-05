@@ -34,9 +34,13 @@ and `date_ms`.
 
 Any other path returns 404, any other method on `/messages` returns 405 with `Allow: POST`.
 
-The rate limit counts every request (failures included), per device when the token is valid
-and per client address otherwise, so unauthenticated floods are limited too. Behind a reverse
-proxy the address is the proxy's unless it forwards the real client address to uvicorn.
+Token checks are ordered to keep hashing cheap to defend: a token that is not URL-safe base64
+of 32 to 128 characters (`pdl-sms-new-device-token` makes 43) is refused with 401 without
+hashing. A token seen valid before is recognised from a small in-memory cache of SHA-256
+digests. Otherwise the request first spends from the client-address bucket (429 once over) and
+only then is verified, in a worker thread. A verified device is limited by its own key, 60
+requests per 60 s, counting failures too. Behind the Ingress the client address is the proxy's,
+so that bucket is one shared cap on hashing work for all unverified callers, by design.
 
 ## Device tokens
 
@@ -87,7 +91,7 @@ Schema `sms`: `messages` (deterministic `id`, `device`, `provider_id`, `thread_i
 
 ## Safety notes
 
-- Token check precedes any body parsing; a token is never logged, nor is a body. One INFO line
+- Token check precedes any body parsing and any hashing is rate limited; a token is never logged, nor is a body. One INFO line
   per request: `device=<name|-> status=<code> count=<n>`.
 - Request size, batch size and field lengths are bounded; one bad item rejects the whole batch.
 - Use TLS in front of the service; bearer tokens travel in the clear otherwise.

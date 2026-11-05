@@ -58,6 +58,7 @@ def test_memory_store_runs(monkeypatch, tokens_file):
     monkeypatch.setenv("SMS_STORE", "memory")
     assert entry.main() == 0
     assert seen["host"] == "0.0.0.0" and seen["port"] == 8000
+    assert seen["access_log"] is False
     assert seen["app"] is not None
 
 
@@ -69,4 +70,4 @@ def test_custom_host_port(monkeypatch, tokens_file):
     monkeypatch.setenv("SMS_STORE_LISTEN_HOST", "127.0.0.1")
     monkeypatch.setenv("SMS_STORE_LISTEN_PORT", "9001")
     assert entry.main() == 0
-    assert seen == {"host": "127.0.0.1", "port": 9001}
+    assert seen == {"host": "127.0.0.1", "port": 9001, "access_log": False}

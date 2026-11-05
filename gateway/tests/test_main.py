@@ -54,6 +54,7 @@ def test_main_runs_uvicorn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("BANK_MCP_SECRET", "s2")
     monkeypatch.setenv("EMAIL_MCP_SECRET", "s3")
     monkeypatch.setenv("SEARCH_MCP_SECRET", "s4")
+    monkeypatch.setenv("SMS_MCP_SECRET", "s5")
     calls: list[tuple[Any, str, int]] = []
 
     def fake_run(app: Any, *, host: str, port: int) -> None:

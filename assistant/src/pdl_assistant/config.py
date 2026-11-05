@@ -19,6 +19,9 @@ _MAX_PORT = 65535
 _TOPIC = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _HHMM = re.compile(r"(\d{2}):(\d{2})")
 _MIN_TOOL_STEPS = 2  # one tool round plus the forced final answer
+_TRUE = ("1", "true", "yes")
+_FALSE = ("0", "false", "no")
+_MAX_LOOKBACK_DAYS = 365
 _NOT_UTF8 = (
     "not UTF-8 text (PowerShell '>' writes UTF-16; "
     "use Set-Content -Encoding utf8 or run the command in bash)"
@@ -54,6 +57,9 @@ class AssistantConfig:
     briefing_retry_until: str = "10:00"  # local HH:MM after which an offline brain skips the day
     briefing_retry_interval_s: int = 900
     briefing_news_count: int = 3
+    flagger_config_file: str | None = None  # YAML of threshold checks; unset disables the flagger
+    flagger_lookback_days: int = 45
+    flagger_require_brain: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,11 +91,24 @@ def _cast(name: str, kind: Any, value: Any) -> Any:
             if isinstance(value, (dict, list)):
                 raise TypeError("expected a scalar")
             return str(value)
+        if kind is bool:
+            return _cast_bool(value)
         if isinstance(value, bool):
             raise TypeError("expected a number")
         return kind(value)
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"{name}: invalid value {value!r} ({exc})") from exc
+
+
+def _cast_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in _TRUE:
+        return True
+    if text in _FALSE:
+        return False
+    raise ValueError("expected 1/true/yes or 0/false/no")
 
 
 def _check_url(name: str, value: str) -> None:
@@ -138,6 +157,12 @@ def _check_bounds(values: Mapping[str, Any]) -> None:
             raise ConfigError(f"{name} must be > 0, got {values[name]}")
 
 
+def _check_flagger(values: Mapping[str, Any]) -> None:
+    days = values.get("flagger_lookback_days", 45)
+    if not 1 <= days <= _MAX_LOOKBACK_DAYS:
+        raise ConfigError(f"flagger_lookback_days must be 1-{_MAX_LOOKBACK_DAYS}, got {days}")
+
+
 def load_config(path: Path | None, env: Mapping[str, str]) -> AssistantConfig:
     """Load config from an optional YAML file, overridden by ``ASSISTANT_<FIELD>`` env vars."""
     raw = _read_mapping(path) if path is not None else {}
@@ -161,6 +186,7 @@ def load_config(path: Path | None, env: Mapping[str, str]) -> AssistantConfig:
             _check_url(name, values[name])
     _check_bounds(values)
     _check_briefing(values)
+    _check_flagger(values)
     return AssistantConfig(**values)
 
 

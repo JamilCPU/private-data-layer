@@ -120,6 +120,21 @@ The `briefing` CronJob runs `pdl-assistant-briefing` at 07:30 America/Chicago wi
 
 The pod stays in `ContainerCreating` until `ntfy-publish`, `briefing-config` and the assistant's own objects exist. The assistant Deployment must have run once first: its `own-data` init container sets the ownership of `/data`, which the job shares. Phone setup is in `assistant/README.md` ("Briefing").
 
+### Flagger
+
+The `flagger` CronJob runs `pdl-assistant-flagger` every hour at :05 with the assistant image and data volume. It evaluates rule-based checks (thresholds, watched senders) through the gateway's read tools, keeps the flags in the assistant's database and sends one ntfy notification per run that lists the new flags (up to 10 lines, then how many more). It uses the same `ntfy-publish` Secret and `briefing-config` topic as the briefing.
+
+1. **Create the config** from the example:
+   ```bash
+   kubectl -n lab create configmap flagger-config --from-file=flagger.yaml=assistant/flagger.example.yaml
+   ```
+2. **Change thresholds and watched senders** with `kubectl -n lab edit configmap flagger-config`. The next hourly run picks it up; no restart is needed because each run is a fresh pod.
+3. **Run it now** with `kubectl -n lab create job --from=cronjob/flagger flagger-now`, read `kubectl -n lab logs job/flagger-now`, then `kubectl -n lab delete job flagger-now`.
+4. **Notifications** arrive on the same ntfy topic as the briefing. Flags are kept in the assistant's database, so nothing repeats, and the morning briefing lists the flags raised since the previous briefing (up to 5). A crash between sending and marking can repeat one notification once. A merchant that bills a subscription and one-off purchases under the same description can cause a one-time false recurring-change flag.
+5. **Pause it** with `kubectl -n lab patch cronjob flagger -p '{"spec":{"suspend":true}}'` (set `false` to resume).
+
+The pod stays in `ContainerCreating` until `flagger-config` exists. The assistant Deployment must have run once first, for the `/data` ownership.
+
 ## Bank and email
 
 `bank-mcp` and `email-mcp` are read-only MCP servers over the `bank` and `email` sources in the

@@ -139,94 +139,101 @@ async def test_bad_tool_results_are_check_errors(result: ToolResult) -> None:
 # --- recurring_change -------------------------------------------------------
 
 
-def recurring_row(**kw: Any) -> dict[str, Any]:
+def changed(**kw: Any) -> dict[str, Any]:
     row = {
-        "description": "STREAMCO",
-        "amount": "10.00",
-        "occurrences": 3,
-        "last_on": "2026-10-05",
-        "cadence_days": 30,
+        "id": "c1",
+        "posted_on": "2026-11-01",
+        "amount": "12.50",
+        "description": "Streamco.com 123",
     }
     return row | kw
 
 
-def recurring_gateway(search_rows: list[dict[str, Any]]) -> FakeGateway:
-    def responder(name: str, _args: dict[str, Any]) -> ToolResult:
-        return ok([recurring_row()]) if name == RECURRING else ok(search_rows)
+def recurring_row(*changes: dict[str, Any], **kw: Any) -> dict[str, Any]:
+    row = {
+        "description": "streamco",
+        "amount": "10.00",
+        "occurrences": 3,
+        "last_on": "2026-10-05",
+        "cadence_days": 30,
+        "changed": list(changes),
+    }
+    return row | kw
 
-    return FakeGateway(responder)
+
+def recurring_gateway(*rows: dict[str, Any]) -> FakeGateway:
+    return fixed(ok(list(rows)))
 
 
-async def test_recurring_change_flags_with_summary_and_arguments() -> None:
-    gw = recurring_gateway([tx(id="s9", posted_on="2026-11-05", amount="-12.50")])
+async def test_recurring_change_flags_with_summary_and_single_call() -> None:
+    gw = recurring_gateway(recurring_row(changed()))
     flags = await run(RecurringChange("sub-change", Decimal(20)), gw)
     assert flags == [
-        Flag("sub-change", "s9", "sub-change: STREAMCO charged -12.50 on 2026-11-05, usually 10.00")
+        Flag(
+            "sub-change",
+            "c1",
+            "sub-change: Streamco.com 123 charged 12.50 on 2026-11-01, usually 10.00",
+        )
     ]
-    assert gw.calls[0] == (RECURRING, {})
-    assert gw.calls[1] == (SEARCH, {"query": "STREAMCO", "since": "2026-10-05", "limit": 20})
+    assert gw.calls == [(RECURRING, {})]
 
 
-@pytest.mark.parametrize("amount", ["-12.00", "-8.00", "-10.00", "-11.99"])
+async def test_recurring_change_window_boundary() -> None:
+    inside = changed(id="in", posted_on="2026-10-04")
+    outside = changed(id="out", posted_on="2026-10-03")
+    gw = recurring_gateway(recurring_row(outside, inside))
+    flags = await run(RecurringChange("c", Decimal(20)), gw, lookback=31)
+    assert [f.key for f in flags] == ["in"]
+
+
+@pytest.mark.parametrize("amount", ["12.00", "8.00", "10.00", "11.99"])
 async def test_recurring_change_at_or_under_percent_does_not_trip(amount: str) -> None:
-    gw = recurring_gateway([tx(posted_on="2026-11-05", amount=amount)])
+    gw = recurring_gateway(recurring_row(changed(amount=amount)))
     assert await run(RecurringChange("c", Decimal(20)), gw) == []
 
 
-async def test_recurring_change_flags_price_drop_beyond_percent() -> None:
-    gw = recurring_gateway([tx(id="d", posted_on="2026-11-05", amount="-7.99")])
+async def test_recurring_change_flags_drop_beyond_percent() -> None:
+    gw = recurring_gateway(recurring_row(changed(id="d", amount="7.99")))
     assert [f.key for f in await run(RecurringChange("c", Decimal(20)), gw)] == ["d"]
 
 
-async def test_recurring_change_ignores_old_and_income_rows() -> None:
-    rows = [
-        tx(id="same", posted_on="2026-10-05", amount="-50.00"),
-        tx(id="old", posted_on="2026-10-01", amount="-50.00"),
-        tx(id="refund", posted_on="2026-11-02", amount="50.00"),
-    ]
-    assert await run(RecurringChange("c", Decimal(20)), recurring_gateway(rows)) == []
-
-
-async def test_recurring_change_skips_unusable_recurring_rows() -> None:
-    rows = [
-        recurring_row(amount="0.00"),
-        recurring_row(description="  "),
-        recurring_row(last_on=None),
-    ]
-    gw = FakeGateway(lambda _n, _a: ok(rows))
+async def test_recurring_change_missing_changed_is_empty() -> None:
+    row = recurring_row()
+    del row["changed"]
+    gw = recurring_gateway(row, recurring_row(changed=None))
     assert await run(RecurringChange("c", Decimal(20)), gw) == []
-    assert [c[0] for c in gw.calls] == [RECURRING]
 
 
-async def test_recurring_change_stops_at_max_recurring() -> None:
-    rows = [recurring_row(description=f"MERCHANT {n}") for n in range(MAX_RECURRING + 5)]
-
-    def responder(name: str, _a: dict[str, Any]) -> ToolResult:
-        return ok(rows) if name == RECURRING else ok([])
-
-    gw = FakeGateway(responder)
-    await run(RecurringChange("c", Decimal(20)), gw)
-    assert sum(1 for c in gw.calls if c[0] == SEARCH) == MAX_RECURRING
+async def test_recurring_change_skips_non_positive_baseline() -> None:
+    gw = recurring_gateway(recurring_row(changed(), amount="0.00"))
+    assert await run(RecurringChange("c", Decimal(20)), gw) == []
 
 
-async def test_recurring_change_dedupes_by_row_id() -> None:
-    rows = [recurring_row(), recurring_row(description="STREAMCO 2")]
-
-    def responder(name: str, _a: dict[str, Any]) -> ToolResult:
-        if name == RECURRING:
-            return ok(rows)
-        return ok([tx(id="same", posted_on="2026-11-05", amount="-50.00")])
-
-    flags = await run(RecurringChange("c", Decimal(20)), FakeGateway(responder))
-    assert len(flags) == 1
+async def test_recurring_change_only_first_max_recurring_rows() -> None:
+    rows = [recurring_row() for _ in range(MAX_RECURRING)]
+    rows.append(recurring_row(changed(id="late")))
+    assert await run(RecurringChange("c", Decimal(20)), recurring_gateway(*rows)) == []
 
 
-async def test_recurring_change_search_error_is_check_error() -> None:
-    def responder(name: str, _a: dict[str, Any]) -> ToolResult:
-        return ok([recurring_row()]) if name == RECURRING else ToolResult("x", True, None)
+async def test_recurring_change_dedupes_same_id_under_two_groups() -> None:
+    gw = recurring_gateway(recurring_row(changed()), recurring_row(changed(), amount="9.00"))
+    assert len(await run(RecurringChange("c", Decimal(20)), gw)) == 1
 
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "nope",
+        ["x"],
+        [changed(id=None)],
+        [changed(posted_on=None)],
+        [changed(amount="lots")],
+    ],
+)
+async def test_recurring_change_malformed_changed_is_check_error(bad: Any) -> None:
+    gw = recurring_gateway(recurring_row(changed=bad))
     with pytest.raises(CheckError):
-        await run(RecurringChange("c", Decimal(20)), FakeGateway(responder))
+        await run(RecurringChange("c", Decimal(20)), gw)
 
 
 # --- email_from -------------------------------------------------------------
@@ -338,3 +345,39 @@ async def test_evaluate_all_dedupes_by_check_and_key() -> None:
     flags, failed = await evaluate_all(checks, fixed(ok([tx()])), today=TODAY, lookback_days=31)
     assert [(f.check, f.key) for f in flags] == [("a", "t1"), ("b", "t1")]
     assert failed == []
+
+
+# --- review minors ------------------------------------------------------------
+
+
+async def test_transaction_row_missing_posted_on_is_check_error() -> None:
+    row = tx()
+    del row["posted_on"]
+    with pytest.raises(CheckError):
+        await run(TransactionOver("big", Decimal(500)), fixed(ok([row])))
+
+
+async def test_non_dict_structured_is_check_error() -> None:
+    result = ToolResult("ok", False, ["x"])  # type: ignore[arg-type]
+    with pytest.raises(CheckError):
+        await run(TransactionOver("big", Decimal(500)), fixed(result))
+
+
+async def test_amount_error_names_the_tool() -> None:
+    with pytest.raises(CheckError, match=SEARCH):
+        await run(TransactionOver("big", Decimal(500)), fixed(ok([tx(amount="lots")])))
+
+
+async def test_unknown_check_type_is_check_error() -> None:
+    with pytest.raises(CheckError):
+        await run(object(), fixed(ok([])))
+
+
+async def test_result_at_limit_logs_truncation_without_content(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rows = [tx(id=f"t{n}", amount="-1.00", description="PRIVATE MERCHANT") for n in range(200)]
+    with caplog.at_level(logging.INFO):
+        await run(TransactionOver("big", Decimal(500)), fixed(ok(rows)))
+    assert "may be truncated" in caplog.text
+    assert "PRIVATE MERCHANT" not in caplog.text

@@ -26,12 +26,23 @@ class SummaryRow:
 
 
 @dataclass(frozen=True)
+class ChangedCharge:
+    """A newer charge from a recurring merchant at a different amount (positive)."""
+
+    id: str
+    posted_on: date
+    amount: Decimal
+    description: str
+
+
+@dataclass(frozen=True)
 class RecurringCharge:
     description_key: str
     amount: Decimal
     occurrences: int
     last_on: date
     cadence_days: int
+    changed: tuple[ChangedCharge, ...] = ()
 
 
 @dataclass(frozen=True)

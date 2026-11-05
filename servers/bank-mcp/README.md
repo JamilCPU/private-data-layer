@@ -15,7 +15,7 @@ The gateway reaches the server over streamable HTTP at `/mcp` and sends the shar
 | `spend_summary(period="this month", group_by="category")` | `since`, `until`, `group_by`, `rows` of `{key, total, count}`, and `total`; `group_by` is `category`, `month` or `account` |
 | `search_transactions(query, since, until, min_amount, max_amount, limit=50)` | transactions newest first as `{id, posted_on, amount, description, category, account}` (`id` is the stable transaction id) |
 | `list_accounts` | `{id, name, institution, currency}` per account |
-| `recurring_charges` | `{description, amount, occurrences, last_on, cadence_days}` per repeating charge |
+| `recurring_charges` | `{description, amount, occurrences, last_on, cadence_days, changed}` per repeating charge; `changed` lists `{id, posted_on, amount, description}` for the first newer charge from the same merchant at a different amount |
 
 `period` accepts `2026-10`, `October`, `last 30 days`, `this month`, `last month`; anything else
 is a tool error. `since` and `until` are ISO dates, amounts are decimal strings, `limit` is 1

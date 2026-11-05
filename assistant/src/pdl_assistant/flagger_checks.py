@@ -39,14 +39,16 @@ class _Gateway(Protocol):
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult: ...
 
 
-def _rows(result: ToolResult, tool: str) -> list[dict[str, Any]]:
+def _rows(result: ToolResult, tool: str, limit: int | None = None) -> list[dict[str, Any]]:
     if result.is_error:
         raise CheckError(f"{tool} returned an error")
-    if result.structured is None:
+    if not isinstance(result.structured, dict):
         raise CheckError(f"{tool} returned no structured result")
     rows = result.structured.get("result")
     if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
         raise CheckError(f"{tool} returned an unexpected result shape")
+    if limit is not None and len(rows) == limit:
+        log.info("%s returned %d rows, the requested limit: result may be truncated", tool, limit)
     return rows
 
 
@@ -60,8 +62,8 @@ def _decimal(row: dict[str, Any], field: str, tool: str) -> Decimal:
     return value
 
 
-def _amount(row: dict[str, Any]) -> Decimal:
-    return _decimal(row, "amount", "row")
+def _amount(row: dict[str, Any], tool: str) -> Decimal:
+    return _decimal(row, "amount", tool)
 
 
 def _line(text: str) -> str:
@@ -97,8 +99,10 @@ async def _transaction_over(
     flags: dict[str, Flag] = {}
     for arguments in calls:
         tool = "bank_search_transactions"
-        for row in _rows(await gateway.call_tool(tool, arguments), tool):
-            amount = _amount(row)
+        for row in _rows(await gateway.call_tool(tool, arguments), tool, _TX_LIMIT):
+            if not row.get("posted_on"):
+                raise CheckError(f"{tool} row is missing posted_on")
+            amount = _amount(row, tool)
             if abs(amount) <= check.amount:
                 continue
             if check.direction == "spend" and amount >= 0:
@@ -108,44 +112,47 @@ async def _transaction_over(
     return list(flags.values())
 
 
-def _recurring_targets(rows: list[dict[str, Any]]) -> list[tuple[str, str, str, Decimal]]:
-    """(description, last_on, baseline text, baseline) for usable recurring rows."""
-    targets = []
-    for row in rows[:MAX_RECURRING]:
-        description = str(row.get("description") or "").strip()
-        last_on = row.get("last_on")
-        if not description or not last_on:
-            continue
-        baseline = _decimal(row, "amount", "bank_recurring_charges")
+def _changed_list(row: dict[str, Any]) -> list[dict[str, Any]]:
+    changed = row.get("changed")
+    if changed is None:
+        return []
+    if not isinstance(changed, list) or not all(isinstance(c, dict) for c in changed):
+        raise CheckError("bank_recurring_charges row has a malformed changed list")
+    return changed
+
+
+def _changed_flag(
+    check: RecurringChange, change: dict[str, Any], baseline_text: str, baseline: Decimal
+) -> Flag | None:
+    tool = "bank_recurring_charges"
+    if not change.get("id") or not change.get("posted_on"):
+        raise CheckError(f"{tool} changed entry is missing id or posted_on")
+    amount = _decimal(change, "amount", tool)
+    if abs(amount - baseline) / baseline * 100 <= check.percent:
+        return None
+    summary = (
+        f"{check.name}: {change.get('description')} charged {change.get('amount')} "
+        f"on {change['posted_on']}, usually {baseline_text}"
+    )
+    return Flag(check.name, str(change["id"]), _line(summary))
+
+
+async def _recurring_change(
+    check: RecurringChange, gateway: _Gateway, today: date, lookback_days: int
+) -> list[Flag]:
+    tool = "bank_recurring_charges"
+    window_start = (today - timedelta(days=lookback_days)).isoformat()
+    flags: dict[str, Flag] = {}
+    for row in _rows(await gateway.call_tool(tool, {}), tool)[:MAX_RECURRING]:
+        baseline = _decimal(row, "amount", tool)
         if baseline <= 0:
             continue
-        targets.append((description, str(last_on), str(row["amount"]), baseline))
-    return targets
-
-
-def _changed(row_amount: Decimal, baseline: Decimal, percent: Decimal) -> bool:
-    return abs(abs(row_amount) - baseline) / baseline * 100 > percent
-
-
-async def _recurring_change(check: RecurringChange, gateway: _Gateway) -> list[Flag]:
-    tool = "bank_recurring_charges"
-    recurring = _rows(await gateway.call_tool(tool, {}), tool)
-    flags: dict[str, Flag] = {}
-    search = "bank_search_transactions"
-    for description, last_on, baseline_text, baseline in _recurring_targets(recurring):
-        arguments = {"query": description, "since": last_on, "limit": _LOOKUP_LIMIT}
-        for row in _rows(await gateway.call_tool(search, arguments), search):
-            if str(row.get("posted_on")) <= last_on:
+        for change in _changed_list(row):
+            if str(change.get("posted_on")) < window_start:
                 continue
-            amount = _amount(row)
-            if amount >= 0 or not _changed(amount, baseline, check.percent):
-                continue
-            summary = (
-                f"{check.name}: {description} charged {row.get('amount')} "
-                f"on {row.get('posted_on')}, usually {baseline_text}"
-            )
-            key = _tx_key(row)
-            flags.setdefault(key, Flag(check.name, key, _line(summary)))
+            flag = _changed_flag(check, change, str(row["amount"]), baseline)
+            if flag is not None:
+                flags.setdefault(flag.key, flag)
     return list(flags.values())
 
 
@@ -163,7 +170,7 @@ async def _email_from(
     flags: dict[str, Flag] = {}
     for sender in check.senders:
         arguments = {"query": sender, "since": since, "limit": _LOOKUP_LIMIT}
-        for row in _rows(await gateway.call_tool(tool, arguments), tool):
+        for row in _rows(await gateway.call_tool(tool, arguments), tool, _LOOKUP_LIMIT):
             if not row.get("id") or row.get("from") is None:
                 raise CheckError(f"{tool} row is missing id or from")
             if sender in str(row["from"]).lower():
@@ -179,8 +186,10 @@ async def evaluate(
     if isinstance(check, TransactionOver):
         return await _transaction_over(check, gateway, today, lookback_days)
     if isinstance(check, RecurringChange):
-        return await _recurring_change(check, gateway)
-    return await _email_from(check, gateway, today, lookback_days)
+        return await _recurring_change(check, gateway, today, lookback_days)
+    if isinstance(check, EmailFrom):
+        return await _email_from(check, gateway, today, lookback_days)
+    raise CheckError(f"unsupported check type {type(check).__name__}")
 
 
 async def evaluate_all(

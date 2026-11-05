@@ -131,6 +131,21 @@ async def test_recurring_charges(store, today) -> None:
     assert rows[0]["occurrences"] == 3
     assert rows[0]["last_on"] == "2026-11-05"
     assert rows[0]["cadence_days"] in (30, 31)
+    assert rows[0]["changed"] == []
+
+
+async def test_recurring_charges_lists_changed(store, today) -> None:
+    from decimal import Decimal
+
+    from pdl_bank.models import Transaction
+
+    store.upsert_transactions(
+        [Transaction("p1", "chk", date(2026, 11, 7), Decimal("-14.99"), "STREAMCO", None, "f")]
+    )
+    rows = _value(await _call(store, today, "recurring_charges"))
+    assert rows[0]["changed"] == [
+        {"id": "p1", "posted_on": "2026-11-07", "amount": "14.99", "description": "STREAMCO"}
+    ]
 
 
 async def test_healthz_open(store, today) -> None:
@@ -181,7 +196,9 @@ async def test_tool_descriptions_are_pinned(store, today) -> None:
         "list_accounts": "The bank accounts that statements have been imported for.",
         "recurring_charges": (
             "Charges that repeat with a similar amount, such as subscriptions and rent, "
-            "with how often and when they last occurred."
+            "with how often and when they last occurred. "
+            "Each one lists the first newer charge from the same merchant at a different "
+            "amount, if any."
         ),
     }
 

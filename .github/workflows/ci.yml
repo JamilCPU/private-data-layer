@@ -159,6 +159,25 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
+  sms-forwarder:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/sms-forwarder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: "platforms;android-35 build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - run: ./gradlew --no-daemon testDebugUnitTest
+
   stub:
     runs-on: ubuntu-latest
     defaults:

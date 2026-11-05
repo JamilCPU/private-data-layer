@@ -15,6 +15,7 @@ resources:
   - assistant-service.yaml
   - assistant-ingress.yaml
   - briefing-cronjob.yaml
+  - flagger-cronjob.yaml
   - homestudio-mcp-deployment.yaml
   - homestudio-mcp-service.yaml
   - homestudio-mcp-networkpolicy.yaml

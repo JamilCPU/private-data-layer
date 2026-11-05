@@ -19,19 +19,25 @@ import org.junit.Test
 class PinnedTlsTest {
     private class Issued(val cert: X509Certificate, val keys: KeyPair)
 
-    private fun keyPair(): KeyPair =
-        KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+    private val hour = 3_600_000L
+    private val keyGen = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }
 
-    private fun issue(subject: String, issuer: Issued?, ca: Boolean): Issued {
-        val keys = keyPair()
+    private fun issue(
+        subject: String,
+        issuer: Issued?,
+        ca: Boolean,
+        notBefore: Long = -hour,
+        notAfter: Long = hour,
+    ): Issued {
+        val keys = keyGen.generateKeyPair()
         val signer = issuer?.keys ?: keys
         val issuerName = issuer?.cert?.subjectX500Principal?.name ?: subject
         val now = System.currentTimeMillis()
         val builder = JcaX509v3CertificateBuilder(
             X500Name(issuerName),
-            BigInteger.valueOf(now),
-            Date(now - 60_000),
-            Date(now + 3_600_000),
+            BigInteger.valueOf(now + subject.hashCode()),
+            Date(now + notBefore),
+            Date(now + notAfter),
             X500Name(subject),
             keys.public,
         ).addExtension(Extension.basicConstraints, true, BasicConstraints(ca))
@@ -41,52 +47,64 @@ class PinnedTlsTest {
 
     private val ca = issue("CN=Pinned CA", null, true)
     private val leaf = issue("CN=sms.lab", ca, false)
-    private val otherCa = issue("CN=Other CA", null, true)
-    private val otherLeaf = issue("CN=sms.lab", otherCa, false)
 
-    private fun manager(pin: X509Certificate = ca.cert) = PinnedCaTrustManager(certFingerprint(pin))
+    private fun manager(anchor: X509Certificate = ca.cert) = PinnedCaTrustManager(anchor)
+
+    private fun assertRejected(m: PinnedCaTrustManager, vararg chain: X509Certificate) {
+        assertThrows(CertificateException::class.java) { m.checkServerTrusted(chain, "RSA") }
+    }
 
     @Test
-    fun acceptsLeafPlusPinnedCa() {
+    fun acceptsLeafOnlyChainSignedByAnchor() {
+        manager().checkServerTrusted(arrayOf(leaf.cert), "RSA")
+    }
+
+    @Test
+    fun acceptsLeafPlusAnchorItself() {
         manager().checkServerTrusted(arrayOf(leaf.cert, ca.cert), "RSA")
     }
 
     @Test
-    fun rejectsLeafAlone() {
-        assertThrows(CertificateException::class.java) {
-            manager().checkServerTrusted(arrayOf(leaf.cert), "RSA")
-        }
+    fun acceptsChainThroughIntermediate() {
+        val inter = issue("CN=Intermediate", ca, true)
+        val deep = issue("CN=sms.lab", inter, false)
+        manager().checkServerTrusted(arrayOf(deep.cert, inter.cert), "RSA")
     }
 
     @Test
     fun rejectsLeafSignedByDifferentCa() {
-        assertThrows(CertificateException::class.java) {
-            manager().checkServerTrusted(arrayOf(otherLeaf.cert, otherCa.cert), "RSA")
-        }
+        val otherCa = issue("CN=Other CA", null, true)
+        assertRejected(manager(), issue("CN=sms.lab", otherCa, false).cert)
     }
 
     @Test
-    fun rejectsLeafClaimingPinnedCaWithoutBeingSignedByIt() {
-        assertThrows(CertificateException::class.java) {
-            manager().checkServerTrusted(arrayOf(otherLeaf.cert, ca.cert), "RSA")
-        }
+    fun rejectsRogueCaWithSameSubjectName() {
+        val rogue = issue("CN=Pinned CA", null, true)
+        val rogueLeaf = issue("CN=sms.lab", rogue, false)
+        assertRejected(manager(), rogueLeaf.cert)
+        assertRejected(manager(), rogueLeaf.cert, rogue.cert)
     }
 
     @Test
-    fun rejectsTamperedPin() {
-        val tampered = PinnedCaTrustManager("00".repeat(32))
-        assertThrows(CertificateException::class.java) {
-            tampered.checkServerTrusted(arrayOf(leaf.cert, ca.cert), "RSA")
-        }
+    fun rejectsExpiredLeaf() {
+        val expired = issue("CN=sms.lab", ca, false, notBefore = -2 * hour, notAfter = -hour)
+        assertRejected(manager(), expired.cert)
     }
 
     @Test
-    fun rejectsEmptyChain() {
-        assertThrows(CertificateException::class.java) { manager().checkServerTrusted(emptyArray(), "RSA") }
+    fun rejectsExpiredAnchor() {
+        val oldCa = issue("CN=Old CA", null, true, notBefore = -2 * hour, notAfter = -hour)
+        assertRejected(PinnedCaTrustManager(oldCa.cert), issue("CN=sms.lab", oldCa, false).cert)
     }
 
     @Test
-    fun clientBuilds() {
-        assertNotNull(pinnedCaOkHttp("ab".repeat(32)))
+    fun rejectsAnchorAloneAndEmptyChain() {
+        assertRejected(manager(), ca.cert)
+        assertRejected(manager())
+    }
+
+    @Test
+    fun clientBuildsFromDer() {
+        assertNotNull(pinnedCaOkHttp(ca.cert.encoded))
     }
 }

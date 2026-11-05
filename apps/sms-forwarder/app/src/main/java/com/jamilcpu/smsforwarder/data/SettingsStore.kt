@@ -16,7 +16,13 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import androidx.datastore.preferences.core.emptyPreferences
+import java.io.IOException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
@@ -80,6 +86,7 @@ private val TOKEN_KEY = stringPreferencesKey("token_enc")
 private val FP_KEY = stringPreferencesKey("ca_fingerprint")
 private val LAST_AT_KEY = longPreferencesKey("last_upload_at")
 private val LAST_RESULT_KEY = stringPreferencesKey("last_result")
+private val CA_KEY = stringPreferencesKey("ca_der_b64")
 private val TOKEN_VALID_KEY = booleanPreferencesKey("token_valid")
 private val WM_DATE_KEY = longPreferencesKey("watermark_date_ms")
 private val WM_ID_KEY = longPreferencesKey("watermark_provider_id")
@@ -110,14 +117,19 @@ class SettingsStore(
 ) {
     private val store = context.applicationContext.smsDataStore
 
-    val flow: Flow<StoreSettings?> = store.data.map { prefs ->
-        val url = prefs[URL_KEY]
-        val fp = prefs[FP_KEY]
-        val token = prefs[TOKEN_KEY]?.let(cipher::decrypt)
-        if (url == null || fp == null || token == null) null else StoreSettings(url, token, fp)
+    private val data: Flow<Preferences> = store.data.catch { e ->
+        if (e is IOException) emit(emptyPreferences()) else throw e
     }
 
-    val status: Flow<UploadStatus> = store.data.map { prefs ->
+    val flow: Flow<StoreSettings?> = data.map { prefs ->
+        val url = prefs[URL_KEY]
+        val fp = prefs[FP_KEY]
+        val ca = prefs[CA_KEY]?.let { runCatching { java.util.Base64.getDecoder().decode(it) }.getOrNull() }
+        val token = prefs[TOKEN_KEY]?.let(cipher::decrypt)
+        if (url == null || fp == null || ca == null || token == null) null else StoreSettings(url, token, fp, ca)
+    }.flowOn(Dispatchers.IO)
+
+    val status: Flow<UploadStatus> = data.map { prefs ->
         UploadStatus(
             lastUploadAt = prefs[LAST_AT_KEY],
             lastResult = prefs[LAST_RESULT_KEY],
@@ -125,12 +137,13 @@ class SettingsStore(
         )
     }
 
-    suspend fun save(s: StoreSettings) {
+    suspend fun save(s: StoreSettings) = withContext(Dispatchers.IO) {
         val encrypted = cipher.encrypt(s.token)
         store.edit {
             it[URL_KEY] = s.url
             it[TOKEN_KEY] = encrypted
             it[FP_KEY] = s.caFingerprint
+            it[CA_KEY] = java.util.Base64.getEncoder().encodeToString(s.caDer)
             it[TOKEN_VALID_KEY] = true
             if (it[WM_DATE_KEY] == null) {
                 it[WM_DATE_KEY] = System.currentTimeMillis()
@@ -141,7 +154,7 @@ class SettingsStore(
 
     /** Null until the first pairing. Survives re-pairing (so a gap is caught up) but not [clear]. */
     suspend fun watermark(): Watermark? {
-        val prefs = store.data.first()
+        val prefs = data.first()
         val date = prefs[WM_DATE_KEY] ?: return null
         return Watermark(date, prefs[WM_ID_KEY] ?: -1L)
     }

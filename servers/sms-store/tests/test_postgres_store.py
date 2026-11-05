@@ -63,7 +63,15 @@ def test_fulltext_column_covers_contact_address_body(pg_store, pg_dsn):
             ).fetchone()[0]
             for q in ("parcel", "alex", "15550100")
         ]
+        # A query with the leading "+" lexes as a signed number, so callers normalise it the
+        # same way the column does before matching.
+        plus = conn.execute(
+            "SELECT count(*) FROM sms.messages WHERE tsv @@ plainto_tsquery("
+            "'simple', regexp_replace(%s, '[^[:alnum:]]+', ' ', 'g'))",
+            ("+15550100",),
+        ).fetchone()[0]
     assert hits == [1, 1, 1]
+    assert plus == 1
 
 
 def test_reader_role_gets_select_when_it_exists(pg_dsn):

@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS sms.messages (
     tsv tsvector GENERATED ALWAYS AS (
         to_tsvector(
             'simple',
-            coalesce(contact, '') || ' ' || coalesce(address, '') || ' ' || coalesce(body, '')
+            coalesce(contact, '') || ' '
+            || regexp_replace(coalesce(address, ''), '[^[:alnum:]]+', ' ', 'g') || ' '
+            || coalesce(body, '')
         )
     ) STORED
 );

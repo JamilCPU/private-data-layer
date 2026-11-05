@@ -19,7 +19,8 @@ _INSERT = (
 )
 _DEVICE_UPSERT = (
     f"INSERT INTO {SCHEMA}.devices (name, last_seen_at, last_provider_id) VALUES (%s, %s, %s) "
-    "ON CONFLICT (name) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at, "
+    "ON CONFLICT (name) DO UPDATE SET "
+    f"last_seen_at = GREATEST({SCHEMA}.devices.last_seen_at, EXCLUDED.last_seen_at), "
     "last_provider_id = EXCLUDED.last_provider_id"
 )
 

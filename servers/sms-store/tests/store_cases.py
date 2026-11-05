@@ -43,6 +43,13 @@ def case_device_seen_round_trip(store):
     assert store.device_seen("other") is None
 
 
+def case_device_seen_keeps_newest_timestamp(store):
+    later = T0 + timedelta(hours=2)
+    store.record_device_seen("pixel", later, "p9")
+    store.record_device_seen("pixel", T0, "p5")
+    assert store.device_seen("pixel") == (later, "p5")
+
+
 def case_count_empty(store):
     assert store.count() == 0
 
@@ -51,5 +58,6 @@ CASES = [
     case_upsert_is_idempotent_and_counts_new,
     case_in_batch_duplicates_count_once,
     case_device_seen_round_trip,
+    case_device_seen_keeps_newest_timestamp,
     case_count_empty,
 ]

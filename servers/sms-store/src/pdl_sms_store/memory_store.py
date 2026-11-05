@@ -22,7 +22,9 @@ class MemoryStore:
         return new
 
     def record_device_seen(self, device: str, at: datetime, last_provider_id: str | None) -> None:
-        self._devices[device] = (at, last_provider_id)
+        previous = self._devices.get(device)
+        newest = max(at, previous[0]) if previous else at
+        self._devices[device] = (newest, last_provider_id)
 
     def device_seen(self, device: str) -> tuple[datetime, str | None] | None:
         return self._devices.get(device)

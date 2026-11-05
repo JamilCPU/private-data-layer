@@ -47,6 +47,7 @@ class AssistantConfig:
     listen_port: int = 8790
     max_tool_steps: int = 6
     model_timeout_s: float = 120
+    model_think: bool | None = None  # reasoning-model thinking: unset keeps the model's default
     tool_timeout_s: float = 60
     session_ttl_s: int = 43200
     system_prompt_extra: str = ""

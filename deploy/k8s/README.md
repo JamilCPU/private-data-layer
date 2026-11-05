@@ -85,8 +85,10 @@ the gateway, and talks to an Ollama server for the model. Deploy it after the ga
    ```bash
    kubectl -n lab create configmap assistant-config \
      --from-literal=ASSISTANT_OLLAMA_URL=http://<workstation>:11434 \
-     --from-literal=ASSISTANT_MODEL=qwen3.5:27b
+     --from-literal=ASSISTANT_MODEL=qwen3.5:27b \n     --from-literal=ASSISTANT_MODEL_THINK=false
    ```
+   `ASSISTANT_MODEL_THINK=false` turns off the model's thinking mode: with it on, this model spent
+   most of the model timeout reasoning before a short briefing summary.
    The workstation must accept inbound connections on 11434 from the LAN (Ollama listening on
    all interfaces via `OLLAMA_HOST`, and a firewall rule allowing the cluster nodes).
 6. **Manifests.** Same as the gateway: copy `base/` to `lab-gitops`, commit, push.

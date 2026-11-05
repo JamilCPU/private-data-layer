@@ -60,7 +60,12 @@ def build_clients(
     gateway = GatewayClient(
         config.gateway_url, config.client_id, client_secret, tool_timeout_s=config.tool_timeout_s
     )
-    llm = OllamaClient(config.ollama_url, config.model, timeout_s=config.model_timeout_s)
+    llm = OllamaClient(
+        config.ollama_url,
+        config.model,
+        timeout_s=config.model_timeout_s,
+        think=config.model_think,
+    )
     return memory, gateway, llm
 
 

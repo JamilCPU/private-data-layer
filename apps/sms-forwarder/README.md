@@ -73,6 +73,24 @@ Hostname verification is the OkHttp default.
 - A missing READ_SMS permission is recorded as "missing SMS permission" and the run ends quietly.
 - Sent rows stay in the queue table as a dedupe record with the body removed.
 
+## Install
+
+The release APK is a debug-signed sideload build for the lab's own phone. It contains no secrets: the
+store URL, token and CA all arrive in the pairing link at runtime.
+
+1. Download `sms-forwarder-v0.1.0-debug.apk` from the
+   [`sms-forwarder-v0.1.0` release](https://github.com/JamilCPU/private-data-layer/releases/tag/sms-forwarder-v0.1.0)
+   and open it on the phone (allow "install unknown apps" for the browser or file manager once).
+2. Open SMS Forwarder and grant the three runtime permissions it asks for: SMS receive, SMS read and
+   Contacts read (`INTERNET` needs no prompt).
+3. Paste the `pdl-sms://pair?...` link from the store operator (or tap it as a link).
+4. Check the confirmation dialog shows the expected store host and the first 16 hex characters of the CA
+   fingerprint, then tap Pair.
+5. Open the status screen: it should show the store host, "paired", and after "Sync now" a successful
+   last result with the queue draining.
+
+To rebuild the APK yourself, see "Build (on the primary node)" below.
+
 ## Build (on the primary node)
 
 The workstation has no Android SDK. Sync the project to the node and run Gradle there (JDK 21,

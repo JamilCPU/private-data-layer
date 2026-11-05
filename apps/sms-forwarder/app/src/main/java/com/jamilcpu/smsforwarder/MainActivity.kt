@@ -22,6 +22,8 @@ import com.jamilcpu.smsforwarder.data.parsePairUri
 import com.jamilcpu.smsforwarder.ui.PairConfirmDialog
 import com.jamilcpu.smsforwarder.ui.StatusScreen
 import com.jamilcpu.smsforwarder.ui.StatusState
+import com.jamilcpu.smsforwarder.sms.AppScope
+import com.jamilcpu.smsforwarder.sms.ForwardingController
 import com.jamilcpu.smsforwarder.sms.QueueDatabase
 import com.jamilcpu.smsforwarder.sms.RoomQueue
 import com.jamilcpu.smsforwarder.sms.UploadWorker
@@ -39,6 +41,8 @@ private val REQUIRED_PERMISSIONS = arrayOf(
 class MainActivity : ComponentActivity() {
     private lateinit var settings: SettingsStore
     private var state by mutableStateOf(StatusState())
+    private var pairing by mutableStateOf(false)
+    private lateinit var controller: ForwardingController
     private var pending by mutableStateOf<PendingPairing?>(null)
     private val syncTrigger = SyncTrigger { UploadWorker.enqueueNow(this) }
 
@@ -48,6 +52,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = SettingsStore(this)
+        controller = ForwardingController.forContext(this, settings)
         observeSettings()
         refreshPermissions()
         handlePairIntent(intent)
@@ -65,6 +70,7 @@ class MainActivity : ComponentActivity() {
                         PairConfirmDialog(
                             pending = p,
                             onConfirm = { confirmPairing(p) },
+                            busy = pairing,
                             onCancel = { pending = null },
                         )
                     }
@@ -98,11 +104,7 @@ class MainActivity : ComponentActivity() {
         RoomQueue(QueueDatabase.get(this).dao()).pendingCount()
 
     private fun unpair() {
-        UploadWorker.cancelAll(this)
-        lifecycleScope.launch {
-            UploadWorker.clearQueue(this@MainActivity)
-            settings.clear()
-        }
+        AppScope.scope.launch { controller.unpair() }
     }
 
     private fun handlePairIntent(intent: Intent?) {
@@ -123,10 +125,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun confirmPairing(p: PendingPairing) {
-        pending = null
-        lifecycleScope.launch {
-            UploadWorker.clearQueue(this@MainActivity) // old provider keys are orphans under a new pairing
-            settings.save(p.incoming)
+        if (pairing) return
+        pairing = true
+        // Application scope: the save must not be lost if the activity goes away meanwhile.
+        AppScope.scope.launch {
+            try {
+                controller.rePair(p.incoming)
+            } finally {
+                pairing = false
+                pending = null
+            }
         }
     }
 

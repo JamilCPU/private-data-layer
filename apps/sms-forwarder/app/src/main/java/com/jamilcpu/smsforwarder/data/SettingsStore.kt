@@ -161,7 +161,11 @@ class SettingsStore(
     suspend fun watermark(): Watermark? {
         val prefs = data.first()
         val date = prefs[WM_DATE_KEY] ?: return null
-        return Watermark(date, prefs[WM_ID_KEY] ?: -1L, prefs[FLOOR_KEY] ?: date)
+        // Installs paired before the floor existed: pin it to the current watermark date, once.
+        val floor = prefs[FLOOR_KEY] ?: date.also { d ->
+            store.edit { if (it[FLOOR_KEY] == null) it[FLOOR_KEY] = d }
+        }
+        return Watermark(date, prefs[WM_ID_KEY] ?: -1L, floor)
     }
 
     suspend fun setWatermark(w: Watermark) {

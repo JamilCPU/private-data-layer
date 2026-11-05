@@ -95,12 +95,14 @@ class OllamaClient:
         *,
         timeout_s: float = 120.0,
         num_ctx: int = 16384,
+        think: bool | None = None,
         http: httpx.AsyncClient | None = None,
     ) -> None:
         self._base = base_url.rstrip("/")
         self.model = model
         self._timeout_s = timeout_s
         self._num_ctx = num_ctx
+        self._think = think  # None leaves the model's own default in place
         self._owns_http = http is None
         self._http = http if http is not None else httpx.AsyncClient()
 
@@ -123,13 +125,15 @@ class OllamaClient:
 
     async def chat(self, messages: Sequence[ChatMessage], tools: Sequence[dict]) -> ChatMessage:
         """One non-streaming chat turn; OfflineError when Ollama is unreachable or failing."""
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [_to_wire(m) for m in messages],
             "tools": list(tools),
             "stream": False,
             "options": {"num_ctx": self._num_ctx},
         }
+        if self._think is not None:
+            payload["think"] = self._think
         try:
             response = await self._http.post(
                 f"{self._base}/api/chat", json=payload, timeout=self._timeout_s

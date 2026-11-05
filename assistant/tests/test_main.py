@@ -8,6 +8,7 @@ from asgi_lifespan import LifespanManager
 from starlette.applications import Starlette
 
 from pdl_assistant import __main__ as entry
+from pdl_assistant.config import load_config
 from pdl_assistant.memory import MemoryStore
 
 COOKIE_SECRET = "s" * 40
@@ -118,3 +119,16 @@ async def test_shutdown_closes_everything_even_if_a_client_fails(tmp_path, monke
     async with LifespanManager(seen["app"]):
         pass
     assert closed == ["login", "memory"]
+
+
+async def test_build_clients_forwards_the_think_switch(tmp_path):
+    config = load_config(_write_files(tmp_path), {"ASSISTANT_MODEL_THINK": "false"})
+    (tmp_path / "data").mkdir(exist_ok=True)
+
+    memory, gateway, llm = entry.build_clients(config, "pa-secret")
+    try:
+        assert llm._think is False
+    finally:
+        memory.close()
+        await gateway.aclose()
+        await llm.aclose()

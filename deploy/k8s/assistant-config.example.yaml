@@ -8,3 +8,5 @@ metadata:
 data:
   ASSISTANT_OLLAMA_URL: http://REPLACE-workstation-address:11434
   ASSISTANT_MODEL: qwen3.5:27b
+  # Thinking off: short summaries otherwise spend most of the model timeout on hidden reasoning.
+  ASSISTANT_MODEL_THINK: "false"

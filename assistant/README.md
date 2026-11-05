@@ -42,6 +42,7 @@ uv run pdl-assistant --config assistant.example.yaml
 | `listen_host` / `listen_port` | `0.0.0.0` / `8790` | Listen address |
 | `max_tool_steps` | `6` | Model/tool rounds per message |
 | `model_timeout_s` / `tool_timeout_s` | `120` / `60` | Timeouts |
+| `model_think` | unset | Thinking for reasoning models: `false` turns it off, `true` forces it on, unset keeps the model's default. Turn it off when short answers time out |
 | `session_ttl_s` | `43200` | Browser session lifetime |
 | `system_prompt_extra` | `""` | Text appended to the system prompt |
 | `ntfy_url` | unset | Self-hosted ntfy base URL for notifications; unset means they are only logged |

@@ -24,6 +24,9 @@ interface Queue {
     /** The subset of [ids] already queued in any state (pending, sent or failed). */
     suspend fun known(ids: List<String>): Set<String>
 
+    /** Deletes `sent` and `failed` rows whose message date is before [dateMs]; pending rows are never touched. */
+    suspend fun pruneOlderThan(dateMs: Long)
+
     /** Drops every row. Used on unpair and on a new pairing (old keys are no longer meaningful). */
     suspend fun clear()
 }

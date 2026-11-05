@@ -74,4 +74,24 @@ class LookbackSweeperTest {
         val fresh = sweeper(provider, queue).sweep(Watermark(now, -1, 0))
         assertEquals(listOf(key(9, now - hour)), fresh.map { it.providerId })
     }
+
+    @Test
+    fun `contact address and thread id are clamped to the store limits`() = runTest {
+        val provider = FakeProvider()
+        provider.rows += RawSms(1, 123456789L, "9".repeat(100), now, "in", "hi")
+        val queue = FakeQueue()
+        val sweeper = LookbackSweeper(provider, queue) { "n".repeat(300) }
+        val out = sweeper.sweep(Watermark(now - hour, -1, 0)).single()
+        assertEquals(64, out.address.length)
+        assertEquals(128, out.contact?.length)
+        assertEquals("123456789", out.threadId)
+    }
+
+    @Test
+    fun `clamping does not split a surrogate pair`() {
+        val emoji = String(Character.toChars(0x1F600))
+        val s = "a".repeat(63) + emoji + "tail"
+        assertEquals("a".repeat(63), clampText(s, 64))
+        assertEquals("short", clampText("short", 64))
+    }
 }

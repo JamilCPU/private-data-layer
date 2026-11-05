@@ -66,9 +66,17 @@ class UploadApiTest {
     }
 
     @Test
-    fun clientErrorsAreRejectedWithStatus() = runTest {
+    fun onlyPayloadErrorsAreRejectedWithStatus() = runTest {
         assertEquals(UploadResult.Rejected(413), api { respondError(HttpStatusCode.PayloadTooLarge) }.post(listOf(msg)))
         assertEquals(UploadResult.Rejected(422), api { respondError(HttpStatusCode.UnprocessableEntity) }.post(listOf(msg)))
+    }
+
+    @Test
+    fun otherClientErrorsAreRetriedNotRejected() = runTest {
+        for (status in listOf(HttpStatusCode.Forbidden, HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed, HttpStatusCode.BadRequest)) {
+            val result = api { respondError(status) }.post(listOf(msg))
+            assertTrue("$status", result is UploadResult.Failed)
+        }
     }
 
     @Test

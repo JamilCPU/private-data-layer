@@ -25,7 +25,7 @@ sealed interface UploadResult {
 
     data class Failed(val reason: String) : UploadResult
 
-    /** The store refused this payload (4xx other than 401 and 429, including 413 too large). */
+    /** The store refused this payload as such: 413 (too large) or 422 (invalid). Item-specific, so bisected. */
     data class Rejected(val status: Int) : UploadResult
 
     /** 429: the store asks us to slow down; stop the run and let WorkManager back off. */

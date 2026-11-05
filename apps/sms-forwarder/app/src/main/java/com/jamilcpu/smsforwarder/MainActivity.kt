@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity() {
     private var pairing by mutableStateOf(false)
     private lateinit var controller: ForwardingController
     private var pending by mutableStateOf<PendingPairing?>(null)
-    private val syncTrigger = SyncTrigger { UploadWorker.enqueueNow(this) }
+    private val syncTrigger = SyncTrigger { UploadWorker.enqueueManual(this) }
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refreshPermissions() }

@@ -63,10 +63,11 @@ class UploadApi(private val client: HttpClient, settings: StoreSettings) {
             HttpStatusCode.OK -> parseReply(response.bodyAsText())
             HttpStatusCode.Unauthorized -> UploadResult.Unauthorized
             HttpStatusCode.TooManyRequests -> UploadResult.RateLimited
-            else -> {
-                val code = response.status.value
-                if (code in 400..499) UploadResult.Rejected(code) else UploadResult.Failed("Store replied $code")
-            }
+            // Only 413 and 422 describe the payload itself; any other 4xx (403, 404, 405, ...) is a
+            // configuration or proxy problem that says nothing about one message, so it is retried.
+            HttpStatusCode.PayloadTooLarge, HttpStatusCode.UnprocessableEntity ->
+                UploadResult.Rejected(response.status.value)
+            else -> UploadResult.Failed("Store replied ${response.status.value}")
         }
 
     private fun parseReply(text: String): UploadResult =

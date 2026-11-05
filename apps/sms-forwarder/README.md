@@ -10,8 +10,13 @@ upload client, a status screen, and the SMS forwarding pipeline described below.
 |---|---|
 | `INTERNET` | Upload to the paired store. |
 | `RECEIVE_SMS` | Be notified of newly arrived messages. |
-| `READ_SMS` | Read the existing message history for the initial sync. |
+| `READ_SMS` | Read new rows from the SMS provider. The first pairing never uploads history. |
 | `READ_CONTACTS` | Attach a contact name to each phone number. |
+
+The merged manifest also lists permissions contributed by libraries, not by this app's own code:
+`WAKE_LOCK`, `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE`, `ACCESS_NETWORK_STATE` (WorkManager, to run
+and reschedule uploads) and the AndroidX dynamic-receiver permission
+(`<package>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`). They need no runtime prompt.
 
 Cleartext traffic is disabled; the store must be reached over `https://`.
 
@@ -49,11 +54,13 @@ Hostname verification is the OkHttp default.
 
 ## How forwarding works
 
-- `SmsReceiver` (`SMS_RECEIVED`) only starts an immediate upload run. Every text is read from the SMS
+- `SmsReceiver` (`SMS_RECEIVED`) only starts an upload run, delayed by 5 seconds because the broadcast can
+  arrive before the default SMS app has written the row (runs are appended behind an in-flight run, so a
+  burst of texts does not cancel it; "Sync now" is a separate, immediate run). Every text is read from the SMS
   content provider, so the sweep is the single source of truth and a text seen twice is one queue row.
 - **Key format.** `provider_id` is `"<_id>-<date_ms>"`. AOSP reuses `_id` after the newest row is
   deleted, so the date is part of the key (queue primary key and the value sent to the store).
-- `UploadWorker` runs every 15 minutes (network required), on every received text, and on "Sync now".
+- `UploadWorker` runs every 15 minutes (network required), on every received text (after the 5 s delay), and on "Sync now".
   Runs are serialised by a process-wide lock. A run sweeps, queues, then uploads oldest first.
 - **Look-back rule.** The watermark is the newest (`date`, `_id`) the store accepted, but the sweep starts
   24 h before it (never before the first-pairing time), because rows can become visible late (sent texts
@@ -61,17 +68,19 @@ Hostname verification is the OkHttp default.
   until a page is short or 500 new rows are found; rows the queue already knows do not count. The watermark
   advances only when a batch is accepted (a `duplicates` reply counts) and survives re-pairing.
 - **First pairing** never uploads existing history: the first-pairing time is a floor for the look-back.
-- **Batch limits.** At most 100 messages and 48 KiB of encoded JSON per request. On 413 or another 4xx
-  (not 401/429) the batch is split in half and each half retried, down to one message. A message the store
+- **Batch limits.** At most 100 messages and 48 KiB of encoded JSON per request. Only 413 and 422 are item-specific: the batch is split in half and each half retried, down to one message. A message the store
   still refuses is marked `failed`: it is kept (so it is not re-queued), never retried, and counted as
-  "rejected" in the status. 429 stops the run and WorkManager retries with backoff.
+  "rejected" in the status. 401 and 429 stop the run (429 retries with backoff). Every other 4xx (403, 404, 405, ...) and all 5xx are
+  treated like an outage: the batch stays pending and WorkManager retries.
 - **Offline / 5xx.** The batch stays pending, status shows `failed: <reason>`, WorkManager retries.
 - **After revocation (401).** The token is marked invalid, status shows "not paired", the run stops
   without retrying. Pair again to resume.
 - **Unpair or a new pairing empties the queue** (old keys are meaningless under the new pairing); the
   look-back re-queues anything still unsent. Pairing also resets the "last result" line.
 - A missing READ_SMS permission is recorded as "missing SMS permission" and the run ends quietly.
-- Sent rows stay in the queue table as a dedupe record with the body removed.
+- Sent and failed rows stay in the queue table as a dedupe record with the body removed, and are pruned
+  once older than 7 days (never past the look-back window of an old watermark).
+- Contact is clamped to 128 characters and address and thread id to 64 before upload (the store limits).
 
 ## Install
 

@@ -4,9 +4,7 @@ import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -54,7 +52,6 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
 
     companion object {
         private const val PERIODIC_NAME = "sms-sweep"
-        private const val NOW_NAME = "sms-sweep-now"
         private const val PERIOD_MINUTES = 15L
 
         private fun network() = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
@@ -68,16 +65,21 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 .enqueueUniquePeriodicWork(PERIODIC_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
         }
 
-        fun enqueueNow(context: Context) {
-            val request = OneTimeWorkRequestBuilder<UploadWorker>().setConstraints(network()).build()
+        /** From the SMS_RECEIVED broadcast: delayed a few seconds, appended behind a running upload. */
+        fun enqueueAfterReceive(context: Context) = enqueue(context, WorkRequestFactory.receiverPlan)
+
+        /** "Sync now": runs immediately, replacing a pending manual run. */
+        fun enqueueManual(context: Context) = enqueue(context, WorkRequestFactory.manualPlan)
+
+        private fun enqueue(context: Context, plan: OneTimePlan) =
             WorkManager.getInstance(context)
-                .enqueueUniqueWork(NOW_NAME, ExistingWorkPolicy.REPLACE, request)
-        }
+                .enqueueUniqueWork(plan.uniqueName, plan.policy, WorkRequestFactory.build(plan))
 
         fun cancelAll(context: Context) {
             val wm = WorkManager.getInstance(context)
             wm.cancelUniqueWork(PERIODIC_NAME)
-            wm.cancelUniqueWork(NOW_NAME)
+            wm.cancelUniqueWork(WorkRequestFactory.receiverPlan.uniqueName)
+            wm.cancelUniqueWork(WorkRequestFactory.manualPlan.uniqueName)
         }
     }
 }

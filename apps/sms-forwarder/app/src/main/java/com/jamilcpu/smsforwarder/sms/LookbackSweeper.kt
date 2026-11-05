@@ -39,12 +39,24 @@ class LookbackSweeper(
     }
 }
 
-private fun RawSms.toOutgoing(contact: String?) = OutgoingMessage(
+/** Store limits: contact 128, address 64, thread_id 64 characters; longer values would be a 422. */
+const val MAX_CONTACT_CHARS = 128
+const val MAX_ADDRESS_CHARS = 64
+const val MAX_THREAD_ID_CHARS = 64
+
+/** At most [max] UTF-16 units, never ending on half of a surrogate pair. */
+fun clampText(s: String, max: Int): String {
+    if (s.length <= max) return s
+    val end = if (s[max - 1].isHighSurrogate()) max - 1 else max
+    return s.substring(0, end)
+}
+
+internal fun RawSms.toOutgoing(contact: String?) = OutgoingMessage(
     providerId = key,
     dateMs = dateMs,
-    address = address,
-    contact = contact,
+    address = clampText(address, MAX_ADDRESS_CHARS),
+    contact = contact?.let { clampText(it, MAX_CONTACT_CHARS) },
     direction = direction,
     body = body,
-    threadId = threadId?.toString(),
+    threadId = threadId?.toString()?.let { clampText(it, MAX_THREAD_ID_CHARS) },
 )

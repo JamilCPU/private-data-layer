@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sms-mcp
+  labels: {app: sms-mcp}
+spec:
+  selector: {app: sms-mcp}
+  ports:
+    - {name: http, port: 8000, targetPort: http}

@@ -225,6 +225,88 @@ SearXNG (next section) and its image is built like the others.
    an interactive client (Claude Code) lists no `search_*` tool and a call answers "unknown tool".
    `search_fetch_page` with `http://gateway.lab/` is refused.
 
+## Texts
+
+`sms-store` is the write endpoint for the phone's SMS forwarder app, published at `https://sms.lab`
+(only `POST /messages` and `/healthz`); `sms-mcp` gives the `personal-assistant` grant read-only
+tools (`sms_*`) through the gateway, `interactive-default` does not see them. Both use the Lab Data
+Store (roles `sms_owner` for the store, `sms_reader` for the MCP server; Secret `lab-data-store`
+keys `SMS_OWNER_PASSWORD` / `SMS_READER_PASSWORD`).
+
+1. **Lab Data Store registration.** The `sms` source (schema, the two roles and their passwords)
+   is registered through the ingest-api sources list of the Lab Data Store; this is done for this
+   cluster. A new cluster needs the same registration before the pods can start.
+2. **Images.** Built on the primary node; the controller pins the sha in `kustomization.yaml`
+   (placeholder tag `latest`):
+   ```bash
+   for n in sms-store sms-mcp; do docker build -t registry.lab:5000/lab/pdl-$n:<git-sha> servers/$n/ && docker push registry.lab:5000/lab/pdl-$n:<git-sha>; done
+   ```
+3. **Gateway secret.** Add the shared secret to `gateway-secrets` (server and gateway read the same
+   key). The gateway reads it at start, so it is restarted after the manifests are applied (step 7):
+   ```bash
+   kubectl -n lab patch secret gateway-secrets --type merge -p "{\"stringData\":{\"SMS_MCP_SECRET\":\"$(python -c 'import secrets; print(secrets.token_urlsafe(32))')\"}}"
+   ```
+4. **Device token.** Steps 4, 6 and 8 handle secrets: run them on the primary node in one private
+   temporary directory, so nothing lands in the repository, and clean it up at the end of step 8.
+   The command writes the token to `pixel.token` and prints the hashed `tokens.yaml` entry on stderr;
+   put that single line under `devices:` in `tokens.yaml`, then create the Secret:
+   ```bash
+   REPO=~/private-data-layer   # your checkout of this repository
+   umask 077 && cd "$(mktemp -d)" && pwd   # stay in this directory until the end of step 8
+   uv run --project "$REPO/servers/sms-store" pdl-sms-new-device-token --name pixel --out pixel.token
+   # the hashed entry is printed on stderr as "  pixel: <hash>"; paste that line as-is under "devices:" in tokens.yaml
+   $EDITOR tokens.yaml
+   kubectl -n lab create secret generic sms-device-tokens --from-file=tokens.yaml=tokens.yaml
+   shred -u tokens.yaml
+   ```
+   `sms-store` stays in `ContainerCreating` until this Secret exists. Revoke a phone by deleting
+   its line, re-creating the Secret and restarting `deploy/sms-store`.
+5. **Network.** The Ingress publishes `sms.lab` with a certificate from the `lab-ca` issuer (Secret
+   `sms-lab-tls`, issued automatically); `sms-store-from-traefik` admits only the Traefik pods
+   (kube-system, `app.kubernetes.io/name: traefik`) on 8000. If the k3s controller fails to match
+   that cross-namespace selector, drop the `podSelector` so the namespace selector stands alone
+   (the same fallback as kube-dns in the search egress policy).
+6. **Pairing URI.** The app is paired with
+   `pdl-sms://pair?url=<url>&token=<token>&fp=<hex>&ca=<base64url>` (about 1.9 KB, so paste it into
+   the app; it does not fit a QR code). `ca` is the lab CA certificate (DER, base64url without
+   padding), `fp` its SHA-256 (the app refuses the link unless they match), `token` the contents of
+   `pixel.token`, percent-encoded. Build the link into a local file and do not print it; run this in
+   the directory of step 4, with `lab-ca.pem` copied there:
+   ```bash
+   ca=$(openssl x509 -in lab-ca.pem -outform DER | base64 -w0 | tr '+/' '-_' | tr -d '=')
+   fp=$(openssl x509 -in lab-ca.pem -outform DER | sha256sum | cut -d' ' -f1)
+   token=$(python -c "import urllib.parse; print(urllib.parse.quote(open('pixel.token').read().strip(), safe=''))")
+   printf 'pdl-sms://pair?url=%s&token=%s&fp=%s&ca=%s\n' 'https%3A%2F%2Fsms.lab' "$token" "$fp" "$ca" > pair-uri.txt
+   ```
+   Get `pair-uri.txt` to the phone over a private channel (for example a copy to the phone's
+   clipboard or a direct file transfer) and paste it into the app; the confirmation dialog shows the
+   host and the first 16 characters of `fp`.
+7. **Manifests.** Copy `base/` to `lab-gitops/apps/private-data-layer/`, commit, push. Once the
+   pods are applied, restart the gateway so it picks up the new backend and `SMS_MCP_SECRET`:
+   ```bash
+   kubectl -n lab rollout restart deploy/gateway
+   ```
+8. **Verify** (same directory; the token files are removed at the end):
+   ```bash
+   # a synthetic message over the lab CA (body format: servers/sms-store/README.md)
+   printf 'Authorization: Bearer %s\n' "$(cat pixel.token)" > auth.hdr
+   curl --cacert lab-ca.pem -H @auth.hdr -H 'Content-Type: application/json' \
+        -d '[{"provider_id":"test-1","date_ms":1767225600000,"address":"+10000000000","direction":"in","body":"synthetic test"}]' \
+        https://sms.lab/messages
+   curl --cacert lab-ca.pem https://sms.lab/healthz
+   kubectl -n lab logs deploy/sms-store
+   # done with the secrets: remove them, then the directory
+   shred -u pixel.token pair-uri.txt auth.hdr && cd .. && rm -rf "$OLDPWD"
+   ```
+   The synthetic message stays in the store, so it shows up in `sms_*` results. Remove it as
+   `sms_owner` (the password is `SMS_OWNER_PASSWORD` in Secret `lab-data-store`):
+   ```sql
+   DELETE FROM sms.messages WHERE provider_id = 'test-1';
+   ```
+   As the `personal-assistant` client the gateway tool list now includes the `sms_*` tools; a token
+   for an interactive client lists none of them. Anything other than `/messages` and `/healthz` on
+   `sms.lab` answers 404.
+
 ## SearXNG and ntfy
 
 Both live in their own folders (`searxng/`, `ntfy/`; in `lab-gitops` as `apps/searxng` and
@@ -256,7 +338,7 @@ Both live in their own folders (`searxng/`, `ntfy/`; in `lab-gitops` as `apps/se
 - The gateway pod stays in `ContainerCreating` until `gateway-secrets` exists;
   `homestudio-mcp` until `homestudio-mcp-config` exists too. Bank and email need more: see
   "Bank and email".
-- `homestudio-mcp`, `bank-mcp`, `email-mcp` and `search-mcp` are amd64-only today, hence the same node pin as the gateway.
+- `homestudio-mcp`, `bank-mcp`, `email-mcp`, `search-mcp`, `sms-store` and `sms-mcp` are amd64-only today, hence the same node pin as the gateway.
 - Scopes, grants and backends are in the ConfigMap's `gateway.yaml`; changing a grant takes
   effect for existing tokens on their next use (the gateway narrows live tokens to the current
   grant) but a restart is needed to reload the file.

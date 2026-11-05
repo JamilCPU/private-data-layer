@@ -36,6 +36,7 @@ def test_loads_example() -> None:
         "bank",
         "email",
         "search",
+        "sms",
     ]
     assert cfg.backends[1].allow_tools == (
         "list_devices",

@@ -1,5 +1,5 @@
 # Local development stack: gateway + homestudio-mcp + a fixture Home Studio stub + assistant,
-# plus postgres, bank-mcp, email-mcp and search-mcp (with SearXNG) (and, with `--profile jobs`, the importer and mail sync).
+# plus postgres, bank-mcp, email-mcp, sms-store, sms-mcp and search-mcp (with SearXNG) (and, with `--profile jobs`, the importer and mail sync).
 # Create gateway secrets and .env first; see README.md.
 services:
   gateway:
@@ -16,6 +16,7 @@ services:
       BANK_MCP_SECRET: ${BANK_MCP_SECRET:?copy .env.example to .env and set it}
       EMAIL_MCP_SECRET: ${EMAIL_MCP_SECRET:?copy .env.example to .env and set it}
       SEARCH_MCP_SECRET: ${SEARCH_MCP_SECRET:?copy .env.example to .env and set it}
+      SMS_MCP_SECRET: ${SMS_MCP_SECRET:?copy .env.example to .env and set it}
     healthcheck:
       test:
         - CMD
@@ -121,6 +122,69 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set it}
     depends_on:
       postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=4)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # SMS write endpoint (the phone's forwarder POSTs here) and its read-only MCP server. The dev
+  # tokens file is gitignored: create it first, see README.md section 7.
+  sms-store:
+    build: ../../servers/sms-store
+    ports:
+      - "127.0.0.1:8004:8000"
+    environment:
+      SMS_DEVICE_TOKENS_FILE: /etc/pdl/sms/tokens.yaml
+      SMS_STORE_LISTEN_HOST: 0.0.0.0
+      SMS_STORE_LISTEN_PORT: "8000"
+      SMS_STORE: postgres
+      SMS_APPLY_MIGRATIONS: "1"
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: lab
+      PGUSER: lab_dev
+      PGPASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set it}
+    volumes:
+      - ./sms-tokens.dev.yaml:/etc/pdl/sms/tokens.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=4)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  sms-mcp:
+    build: ../../servers/sms-mcp
+    ports:
+      - "127.0.0.1:8005:8000"
+    environment:
+      SMS_MCP_SHARED_SECRET: ${SMS_MCP_SECRET:?copy .env.example to .env and set it}
+      SMS_MCP_HOST: 0.0.0.0
+      SMS_MCP_PORT: "8000"
+      SMS_STORE: postgres
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: lab
+      PGUSER: lab_dev
+      PGPASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set it}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sms-store:
         condition: service_healthy
     healthcheck:
       test:

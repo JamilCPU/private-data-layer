@@ -1,0 +1,63 @@
+# Read-only MCP server over the SMS tables in the Lab Data Store (Postgres). Reachable only from
+# the gateway (ClusterIP + NetworkPolicy + shared-secret header). It connects as the read-only
+# role `sms_reader`; the password comes from the Lab Data Store Secret `lab-data-store`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sms-mcp
+  labels: {app: sms-mcp}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: sms-mcp}
+  template:
+    metadata:
+      labels: {app: sms-mcp}
+    spec:
+      nodeSelector:
+        role: primary-worker   # amd64 image
+      # Without this, Kubernetes injects SMS_MCP_PORT=tcp://<cluster-ip>:8000 from the
+      # Service of the same name, which the server reads as its listen port.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: sms-mcp
+          image: registry.lab/lab/pdl-sms-mcp:latest
+          imagePullPolicy: Always
+          ports:
+            - {name: http, containerPort: 8000}
+          env:
+            - {name: SMS_MCP_HOST, value: "0.0.0.0"}
+            - {name: SMS_MCP_PORT, value: "8000"}
+            - {name: SMS_STORE, value: postgres}
+            - {name: PGHOST, value: postgres.lab.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            - {name: PGDATABASE, value: lab}
+            - {name: PGUSER, value: sms_reader}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: lab-data-store, key: SMS_READER_PASSWORD}}
+            - name: SMS_MCP_SHARED_SECRET
+              valueFrom: {secretKeyRef: {name: gateway-secrets, key: SMS_MCP_SECRET}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}

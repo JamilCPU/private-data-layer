@@ -1,0 +1,20 @@
+# sms-store takes traffic only from the Traefik pods (the Ingress at sms.lab). It has no egress
+# policy because it must reach Postgres.
+# If the k3s policy controller fails to match the cross-namespace pod selector (as it did for
+# kube-dns in step 4), fall back to the namespaceSelector for kube-system alone.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sms-store-from-traefik
+spec:
+  podSelector:
+    matchLabels: {app: sms-store}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: traefik}
+      ports:
+        - {protocol: TCP, port: 8000}

@@ -90,6 +90,62 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
+  sms-mcp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: servers/sms-mcp
+    env:
+      # The CI database is an ephemeral service container; its password is the run id, not a secret.
+      TEST_PG_DSN: postgresql://postgres:${{ github.run_id }}@localhost:5432/postgres
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ${{ github.run_id }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  sms-store:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: servers/sms-store
+    env:
+      # The CI database is an ephemeral service container; its password is the run id, not a secret.
+      TEST_PG_DSN: postgresql://postgres:${{ github.run_id }}@localhost:5432/postgres
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ${{ github.run_id }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
   search-mcp:
     runs-on: ubuntu-latest
     defaults:
@@ -102,6 +158,25 @@ jobs:
       - run: uv run pytest -q
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+
+  sms-forwarder:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/sms-forwarder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+        with:
+          accept-android-sdk-licenses: true
+          packages: "platforms;android-35 build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew
+      - run: ./gradlew --no-daemon testDebugUnitTest
 
   stub:
     runs-on: ubuntu-latest
@@ -117,7 +192,7 @@ jobs:
   image-check:
     # Build (never push) the images on pull requests so the Dockerfiles are exercised before main.
     if: github.event_name == 'pull_request'
-    needs: [gateway, assistant, bank-mcp, email-mcp, search-mcp]
+    needs: [gateway, assistant, bank-mcp, email-mcp, search-mcp, sms-store, sms-mcp]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -146,10 +221,20 @@ jobs:
           context: servers/search-mcp
           push: false
           tags: pdl-search-mcp:pr-${{ github.event.pull_request.number }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/sms-store
+          push: false
+          tags: pdl-sms-store:pr-${{ github.event.pull_request.number }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/sms-mcp
+          push: false
+          tags: pdl-sms-mcp:pr-${{ github.event.pull_request.number }}
 
   image:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [gateway, assistant, bank-mcp, email-mcp, search-mcp, stub]
+    needs: [gateway, assistant, bank-mcp, email-mcp, search-mcp, sms-store, sms-mcp, stub]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -196,3 +281,17 @@ jobs:
           tags: |
             ghcr.io/jamilcpu/pdl-search-mcp:latest
             ghcr.io/jamilcpu/pdl-search-mcp:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/sms-store
+          push: true
+          tags: |
+            ghcr.io/jamilcpu/pdl-sms-store:latest
+            ghcr.io/jamilcpu/pdl-sms-store:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: servers/sms-mcp
+          push: true
+          tags: |
+            ghcr.io/jamilcpu/pdl-sms-mcp:latest
+            ghcr.io/jamilcpu/pdl-sms-mcp:${{ github.sha }}

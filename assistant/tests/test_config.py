@@ -257,3 +257,18 @@ def test_flagger_lookback_bounds(tmp_path: Path, days: int) -> None:
 def test_flagger_lookback_bounds_accepted(tmp_path: Path, days: int) -> None:
     cfg = load_config(_write(tmp_path, _yaml(flagger_lookback_days=days)), {})
     assert cfg.flagger_lookback_days == days
+
+
+def test_model_think_defaults_to_the_model_default(tmp_path: Path) -> None:
+    assert load_config(_write(tmp_path, _yaml()), {}).model_think is None
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("false", False), ("0", False), ("true", True)])
+def test_model_think_env_values(tmp_path: Path, raw: str, expected: bool) -> None:
+    env = {"ASSISTANT_MODEL_THINK": raw}
+    assert load_config(_write(tmp_path, _yaml()), env).model_think is expected
+
+
+def test_model_think_rejects_other_text(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="model_think"):
+        load_config(_write(tmp_path, _yaml()), {"ASSISTANT_MODEL_THINK": "sometimes"})

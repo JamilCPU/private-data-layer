@@ -61,13 +61,15 @@ Names are `[a-z0-9_-]`, 1 to 32 characters.
 
 ## Pairing URI
 
-The phone app is configured by a URI, shown as a QR code or link:
+The phone app is configured by a link (paste it into the app, or tap it):
 
 ```
-pdl-sms://pair?url=https://sms.lab&token=<token>&fp=<sha256 hex of the lab CA DER>
+pdl-sms://pair?url=<percent-encoded https://sms.lab>&token=<percent-encoded token>&fp=<sha256 hex of the lab CA DER>&ca=<base64url DER of the lab CA>
 ```
 
-`fp` pins the lab CA certificate so the app trusts only that authority for `sms.lab`.
+`ca` is the lab CA certificate (DER, base64url without padding) and the only trust anchor the app uses
+for `sms.lab`. `fp` is its SHA-256 (hex); the app refuses the link unless the SHA-256 of `ca` equals `fp`.
+With `ca` the link is about 1.9 KB, so it is too long for a QR code: paste it only.
 
 ## Configuration
 

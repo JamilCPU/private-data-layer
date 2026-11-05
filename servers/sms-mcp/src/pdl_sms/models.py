@@ -11,7 +11,7 @@ class Message:
     id: str
     device: str
     provider_id: str
-    thread_id: str
+    thread_id: str | None
     address: str
     contact: str | None
     direction: str  # "in" or "out"

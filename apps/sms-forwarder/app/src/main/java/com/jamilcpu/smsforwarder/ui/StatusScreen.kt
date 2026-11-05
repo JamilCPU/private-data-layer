@@ -34,7 +34,7 @@ data class StatusState(
     val pairError: String? = null,
 )
 
-/** Starts an immediate upload of queued messages. Wired to UploadWorker.enqueueNow. */
+/** Starts an immediate upload of queued messages. Wired to UploadWorker.enqueueManual. */
 fun interface SyncTrigger {
     fun syncNow()
 }

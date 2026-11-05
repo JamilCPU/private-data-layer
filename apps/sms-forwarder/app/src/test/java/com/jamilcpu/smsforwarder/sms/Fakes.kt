@@ -35,6 +35,13 @@ class FakeQueue : Queue {
 
     override suspend fun clear() = rows.clear()
 
+    val pruneCutoffs = mutableListOf<Long>()
+
+    override suspend fun pruneOlderThan(dateMs: Long) {
+        pruneCutoffs += dateMs
+        rows.entries.removeAll { it.value.second != STATE_PENDING && it.value.first.dateMs < dateMs }
+    }
+
     fun stateOf(id: String): String? = rows[id]?.second
 }
 

@@ -27,6 +27,9 @@ interface RunnerState {
     suspend fun recordUnauthorized()
 }
 
+/** `sent` and `failed` rows are kept as a dedupe record for this long (by message date). */
+const val PRUNE_AFTER_MS = 7L * 24 * 60 * 60 * 1000
+
 enum class RunOutcome {
     /** Everything swept has been uploaded (possibly nothing to do). */
     Done,
@@ -67,11 +70,18 @@ class UploadRunner(
             val moved = state.watermark() != before
             if (swept.size < SWEEP_LIMIT || !moved) break
         }
+        prune()
         if (outcome == RunOutcome.Done && totals.accepted + totals.duplicates + totals.failed > 0) {
             val rejected = if (totals.failed > 0) ", ${totals.failed} rejected" else ""
             state.recordSuccess(clock(), "uploaded ${totals.accepted}, ${totals.duplicates} already stored$rejected")
         }
         return outcome
+    }
+
+    /** Drops finished rows older than [PRUNE_AFTER_MS], but never ones the look-back could still revisit. */
+    private suspend fun prune() {
+        val lookbackStart = state.watermark().dateMs - LOOKBACK_MS
+        queue.pruneOlderThan(minOf(clock() - PRUNE_AFTER_MS, lookbackStart))
     }
 
     private suspend fun drain(totals: Totals): RunOutcome {
@@ -109,7 +119,7 @@ class UploadRunner(
         }
 
     /**
-     * The store refused the payload (413, 422, ...). A single item is poison: mark it failed so it is
+     * The store refused the payload itself (413 or 422). A single item is poison: mark it failed so it is
      * never retried. A bigger batch is split in half and each half retried, which isolates it.
      */
     private suspend fun isolate(batch: List<OutgoingMessage>, status: Int, totals: Totals): RunOutcome? {

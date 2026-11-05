@@ -24,7 +24,7 @@ data class QueuedMessage(
     val address: String,
     val contact: String?,
     val direction: String,
-    /** Nulled once sent: dedupe needs only the key. */
+    /** Nulled once sent or failed: dedupe needs only the key. */
     val body: String?,
     @ColumnInfo(name = "thread_id") val threadId: String?,
     val state: String = STATE_PENDING,
@@ -46,7 +46,7 @@ interface QueueDao {
     @Query("UPDATE queued_messages SET state = 'sent', body = NULL WHERE provider_id IN (:ids)")
     suspend fun markSent(ids: List<String>)
 
-    @Query("UPDATE queued_messages SET state = 'failed', attempts = attempts + 1 WHERE provider_id IN (:ids)")
+    @Query("UPDATE queued_messages SET state = 'failed', body = NULL, attempts = attempts + 1 WHERE provider_id IN (:ids)")
     suspend fun markFailed(ids: List<String>)
 
     @Query("SELECT COUNT(*) FROM queued_messages WHERE state = 'pending'")
@@ -54,6 +54,9 @@ interface QueueDao {
 
     @Query("SELECT provider_id FROM queued_messages WHERE provider_id IN (:ids)")
     suspend fun known(ids: List<String>): List<String>
+
+    @Query("DELETE FROM queued_messages WHERE state IN ('sent', 'failed') AND date_ms < :dateMs")
+    suspend fun pruneOlderThan(dateMs: Long)
 
     @Query("DELETE FROM queued_messages")
     suspend fun clear()
@@ -92,6 +95,8 @@ class RoomQueue(private val dao: QueueDao) : Queue {
 
     override suspend fun known(ids: List<String>): Set<String> =
         ids.chunked(SQL_CHUNK).flatMap { dao.known(it) }.toSet()
+
+    override suspend fun pruneOlderThan(dateMs: Long) = dao.pruneOlderThan(dateMs)
 
     override suspend fun clear() = dao.clear()
 

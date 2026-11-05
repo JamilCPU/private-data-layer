@@ -12,7 +12,7 @@ fun PairConfirmDialog(pending: PendingPairing, onConfirm: () -> Unit, onCancel: 
         onDismissRequest = { if (!busy) onCancel() },
         title = { Text("Confirm pairing") },
         text = { Text(pending.message) },
-        confirmButton = { TextButton(onClick = onConfirm, enabled = !busy) { Text(if (busy) "Pairing…" else "Pair") } },
+        confirmButton = { TextButton(onClick = onConfirm, enabled = !busy) { Text(if (busy) "Pairing\u2026" else "Pair") } },
         dismissButton = { TextButton(onClick = onCancel, enabled = !busy) { Text("Cancel") } },
     )
 }

@@ -146,6 +146,40 @@ class UploadRunnerTest {
     }
 
     @Test
+    fun `a 404 leaves every row pending and asks for retry`() = runTest {
+        val queue = FakeQueue()
+        queue.enqueueAll((1L..30L).map { msg(it) })
+        val up = BatchUploader { UploadResult.Failed("Store replied 404") }
+        val state = FakeState()
+        val outcome = runner(queue, up, state) { emptyList() }.run()
+        assertEquals(RunOutcome.Retry, outcome)
+        assertEquals(30, queue.pendingCount())
+        assertTrue(queue.rows.values.none { it.second == STATE_FAILED })
+    }
+
+    @Test
+    fun `finished runs prune old sent and failed rows but keep recent and pending ones`() = runTest {
+        val clock = 100L * 24 * 3_600_000
+        val day = 24L * 3_600_000
+        val queue = FakeQueue()
+        queue.enqueueAll(listOf(msg(1, clock - 10 * day), msg(2, clock - 9 * day), msg(3, clock - day), msg(4, clock - 20 * day)))
+        queue.markSent(listOf(key(1, clock - 10 * day), key(3, clock - day)))
+        queue.markFailed(listOf(key(2, clock - 9 * day)))
+        val up = BatchUploader { UploadResult.Failed("offline") } // key 4 stays pending
+        UploadRunner(queue, up, FakeState(Watermark(clock, -1)), { emptyList() }, { clock }).run()
+        assertEquals(setOf(key(3, clock - day), key(4, clock - 20 * day)), queue.rows.keys)
+    }
+
+    @Test
+    fun `prune cutoff never passes the look-back start of an old watermark`() = runTest {
+        val queue = FakeQueue()
+        val clock = 100L * 24 * 3_600_000
+        val old = clock - 30L * 24 * 3_600_000
+        UploadRunner(queue, ScriptedUploader(listOf(ok)), FakeState(Watermark(old, -1)), { emptyList() }, { clock }).run()
+        assertEquals(old - LOOKBACK_MS, queue.pruneCutoffs.last())
+    }
+
+    @Test
     fun `429 stops the run and asks for retry`() = runTest {
         val queue = FakeQueue()
         queue.enqueueAll((1L..300L).map { msg(it) })

@@ -54,7 +54,8 @@ It signs in through the gateway (OAuth, with the gateway's approval page), calls
 the gateway, and talks to an Ollama server for the model. Deploy it after the gateway.
 
 1. **Image.** Built on the primary node into the lab registry, like the gateway; the controller
-   pins the sha in `kustomization.yaml` (the manifest ships the placeholder tag `latest`):
+   pins the sha in `kustomization.yaml` (the manifest ships the placeholder tag `latest`; quote the
+   sha, because one made of digits and a single `e`, such as `0e30706`, is a YAML number):
    ```bash
    docker build -t registry.lab:5000/lab/pdl-assistant:<git-sha> assistant/ && docker push registry.lab:5000/lab/pdl-assistant:<git-sha>
    ```

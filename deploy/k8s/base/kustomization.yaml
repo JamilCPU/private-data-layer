@@ -39,6 +39,7 @@ resources:
   - email-sync-cronjob.yaml
 images:
   # Tags are the git sha the image was built from; the lab-gitops copy carries the deployed pins.
+  # Quote a pinned sha (newTag: "0e30706"): one made of digits and a single e is a YAML number.
   - name: registry.lab/lab/pdl-gateway
     newTag: 395260f
   - name: registry.lab/lab/pdl-assistant

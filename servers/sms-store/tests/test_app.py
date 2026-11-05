@@ -4,12 +4,14 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
+import pdl_sms_store.tokens as tokens_mod
 from pdl_sms_store.app import build_app
 from pdl_sms_store.limits import MAX_BATCH, MAX_BODY_BYTES, RateLimiter
 from pdl_sms_store.memory_store import MemoryStore
 from pdl_sms_store.tokens import hash_token
 
-TOKEN = "good-token"
+TOKEN = "G" * 43
+WRONG = "W" * 43
 NOW = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 
 
@@ -61,7 +63,9 @@ async def test_healthz_and_headers(devices):
     assert r.headers["content-type"].startswith("application/json")
 
 
-@pytest.mark.parametrize("headers", [{}, auth("wrong"), {"Authorization": "Basic abc"}])
+@pytest.mark.parametrize(
+    "headers", [{}, auth(WRONG), auth("short"), {"Authorization": "Basic abc"}]
+)
 async def test_unauthorized_before_body_is_parsed(devices, headers):
     store, c = make(devices)
     r = await c.post("/messages", content=b"{not json", headers=headers)
@@ -74,7 +78,7 @@ async def test_revoked_token_is_rejected(devices):
     store, c = make(devices)
     ok = await c.post("/messages", json=[msg()], headers=auth())
     assert ok.status_code == 200
-    app = build_app(store, {"other": hash_token("x", iterations=1000)}, now=lambda: NOW)
+    app = build_app(store, {"other": hash_token("X" * 43, iterations=1000)}, now=lambda: NOW)
     c2 = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
     r = await c2.post("/messages", json=[msg("p2")], headers=auth())
     assert r.status_code == 401 and store.count() == 1
@@ -167,7 +171,7 @@ async def test_unauthenticated_flood_limited_by_ip(devices):
     _, c = make(devices, rate=RateLimiter(limit=3))
     codes = []
     for _ in range(5):
-        r = await c.post("/messages", json=[], headers=auth("bad"))
+        r = await c.post("/messages", json=[], headers=auth(WRONG))
         codes.append(r.status_code)
     assert codes == [401, 401, 401, 429, 429]
 
@@ -201,3 +205,109 @@ async def test_log_line_has_no_body_or_token(devices, caplog):
     text = caplog.text
     assert "device=pixel status=200 count=1" in text
     assert "topsecretbody" not in text and TOKEN not in text
+
+
+@pytest.fixture
+def verify_calls(monkeypatch):
+    calls = []
+    real = tokens_mod.verify_token
+
+    def counting(token, hashed):
+        calls.append(token)
+        return real(token, hashed)
+
+    monkeypatch.setattr(tokens_mod, "verify_token", counting)
+    return calls
+
+
+async def test_over_limit_bad_token_never_hashes(devices, verify_calls):
+    _, c = make(devices, rate=RateLimiter(limit=2))
+    codes = []
+    for _ in range(4):
+        codes.append((await c.post("/messages", json=[], headers=auth(WRONG))).status_code)
+    assert codes == [401, 401, 429, 429]
+    assert len(verify_calls) == 2
+
+
+@pytest.mark.parametrize("bad", ["x" * 31, "x" * 129, "a" * 40 + "!!!", "a b" * 20])
+async def test_malformed_token_never_hashes(devices, verify_calls, bad):
+    _, c = make(devices)
+    r = await c.post("/messages", json=[msg()], headers=auth(bad))
+    assert r.status_code == 401 and verify_calls == []
+
+
+async def test_verified_token_is_cached(devices, verify_calls):
+    _, c = make(devices)
+    for i in range(3):
+        r = await c.post("/messages", json=[msg(f"p{i}")], headers=auth())
+        assert r.status_code == 200
+    assert len(verify_calls) == 1
+
+
+async def test_bad_token_budget_does_not_block_valid_device(devices):
+    _, c = make(devices, rate=RateLimiter(limit=10))
+    for _ in range(9):
+        await c.post("/messages", json=[], headers=auth(WRONG))
+    r = await c.post("/messages", json=[msg()], headers=auth())
+    assert r.status_code == 200
+
+
+async def test_numeric_provider_ids_use_numeric_max(devices):
+    store, c = make(devices)
+    await c.post("/messages", json=[msg("99"), msg("100")], headers=auth())
+    assert store.device_seen("pixel") == (NOW, "100")
+
+
+async def test_unexpected_exception_is_500_json_with_headers(devices):
+    class Boom(MemoryStore):
+        def record_device_seen(self, device, at, last_provider_id):
+            raise RuntimeError("secret detail")
+
+    app = build_app(Boom(), devices, now=lambda: NOW)
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    c = httpx.AsyncClient(transport=transport, base_url="http://t")
+    r = await c.post("/messages", json=[msg()], headers=auth())
+    assert r.status_code == 500 and r.json() == {"error": "store error"}
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_catch_all_handler_covers_non_store_errors(devices, monkeypatch):
+    import pdl_sms_store.app as app_mod
+
+    def boom(*a, **k):
+        raise RuntimeError("secret detail")
+
+    monkeypatch.setattr(app_mod, "_decode_batch", boom)
+    app = build_app(MemoryStore(), devices, now=lambda: NOW)
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    c = httpx.AsyncClient(transport=transport, base_url="http://t")
+    r = await c.post("/messages", json=[msg()], headers=auth())
+    assert r.status_code == 500 and r.json() == {"error": "store error"}
+    assert r.headers["cache-control"] == "no-store"
+    assert "secret detail" not in r.text
+
+
+async def test_store_failure_log_has_only_exception_type(devices, caplog):
+    class Boom(MemoryStore):
+        def upsert_messages(self, msgs):
+            raise RuntimeError("secret detail")
+
+    caplog.set_level("INFO", logger="pdl_sms_store.app")
+    _, c = make(devices, store=Boom())
+    await c.post("/messages", json=[msg()], headers=auth())
+    assert "RuntimeError" in caplog.text and "secret detail" not in caplog.text
+
+
+async def test_cache_is_bounded_and_evicts_oldest(monkeypatch, verify_calls):
+    import pdl_sms_store.app as app_mod
+
+    monkeypatch.setattr(app_mod, "CACHE_PER_DEVICE", 0)  # bound becomes 1 entry
+    other = "O" * 43
+    two = {
+        "pixel": hash_token(TOKEN, iterations=1000),
+        "tab": hash_token(other, iterations=1000),
+    }
+    _, c = make(two)
+    for token in (TOKEN, other, TOKEN):
+        assert (await c.post("/messages", json=[msg()], headers=auth(token))).status_code == 200
+    assert verify_calls.count(TOKEN) >= 2  # evicted by `other`, hashed again

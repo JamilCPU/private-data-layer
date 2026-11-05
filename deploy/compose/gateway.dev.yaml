@@ -28,6 +28,11 @@ backends:
     scope: search:read
     secret_header: X-Gateway-Secret
     secret_env: SEARCH_MCP_SECRET
+  - name: sms
+    url: http://sms-mcp:8000/mcp
+    scope: sms:read
+    secret_header: X-Gateway-Secret
+    secret_env: SMS_MCP_SECRET
   # The automations backend needs the Personal Automations MCP server, which the
   # compose stack does not run. To try it against a real one, uncomment this block,
   # point `url` at it, and then:

@@ -32,6 +32,11 @@ backends:
     scope: search:read
     secret_header: X-Gateway-Secret
     secret_env: SEARCH_MCP_SECRET
+  - name: sms
+    url: http://sms-mcp:8000/mcp
+    scope: sms:read
+    secret_header: X-Gateway-Secret
+    secret_env: SMS_MCP_SECRET
 grants:
   - name: personal-assistant
     kind: headless

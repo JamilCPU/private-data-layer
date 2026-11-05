@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Wrench: open-jaw head at top-right, handle running to bottom-left; drawn in the 66dp safe zone. -->
+    <group android:rotation="45" android:pivotX="54" android:pivotY="54">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M45,24 L45,38 L51,42 L51,50 L48,50 L48,80 Q48,84 54,84 Q60,84 60,80 L60,50 L57,50 L57,42 L63,38 L63,24 L58,24 L58,34 L54,36 L50,34 L50,24 Z" />
+    </group>
+</vector>

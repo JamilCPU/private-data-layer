@@ -1,0 +1,71 @@
+# Write-side HTTP endpoint for the phone's SMS forwarder (POST /messages, per-device bearer
+# token), published at https://sms.lab through the Ingress. It connects as the owner role
+# `sms_owner` (applies the schema migrations); the password comes from the Lab Data Store Secret
+# `lab-data-store`. The device tokens file is the out-of-band Secret `sms-device-tokens`
+# (key tokens.yaml); see ../README.md, "Texts".
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sms-store
+  labels: {app: sms-store}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: sms-store}
+  template:
+    metadata:
+      labels: {app: sms-store}
+    spec:
+      nodeSelector:
+        role: primary-worker   # amd64 image
+      # Without this, Kubernetes injects SMS_STORE_PORT=tcp://<cluster-ip>:8000 from the
+      # Service of the same name, which collides with the SMS_STORE setting family.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001   # lets uid 10001 read the 0440 tokens file
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: sms-store
+          image: registry.lab/lab/pdl-sms-store:latest
+          imagePullPolicy: Always
+          ports:
+            - {name: http, containerPort: 8000}
+          env:
+            - {name: SMS_STORE_LISTEN_HOST, value: "0.0.0.0"}
+            - {name: SMS_STORE_LISTEN_PORT, value: "8000"}
+            - {name: SMS_STORE, value: postgres}
+            - {name: SMS_APPLY_MIGRATIONS, value: "1"}
+            - {name: SMS_DEVICE_TOKENS_FILE, value: /etc/pdl/sms/tokens.yaml}
+            - {name: PGHOST, value: postgres.lab.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            - {name: PGDATABASE, value: lab}
+            - {name: PGUSER, value: sms_owner}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: lab-data-store, key: SMS_OWNER_PASSWORD}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: device-tokens, mountPath: /etc/pdl/sms/tokens.yaml, subPath: tokens.yaml, readOnly: true}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: device-tokens
+          secret:
+            secretName: sms-device-tokens
+            defaultMode: 288   # decimal for octal 0440

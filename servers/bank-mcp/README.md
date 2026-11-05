@@ -13,7 +13,7 @@ The gateway reaches the server over streamable HTTP at `/mcp` and sends the shar
 | Tool | Returns |
 |---|---|
 | `spend_summary(period="this month", group_by="category")` | `since`, `until`, `group_by`, `rows` of `{key, total, count}`, and `total`; `group_by` is `category`, `month` or `account` |
-| `search_transactions(query, since, until, min_amount, max_amount, limit=50)` | transactions newest first as `{posted_on, amount, description, category, account}` |
+| `search_transactions(query, since, until, min_amount, max_amount, limit=50)` | transactions newest first as `{id, posted_on, amount, description, category, account}` (`id` is the stable transaction id) |
 | `list_accounts` | `{id, name, institution, currency}` per account |
 | `recurring_charges` | `{description, amount, occurrences, last_on, cadence_days}` per repeating charge |
 

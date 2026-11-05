@@ -72,6 +72,7 @@ async def test_search_shape_and_order(store, today) -> None:
     rows = _value(await _call(store, today, "search_transactions", {"limit": 3}))
     assert [r["posted_on"] for r in rows] == ["2026-11-05", "2026-10-30", "2026-10-28"]
     assert rows[1] == {
+        "id": "t7",
         "posted_on": "2026-10-30",
         "amount": "-100.00",
         "description": "TRANSFER OUT",

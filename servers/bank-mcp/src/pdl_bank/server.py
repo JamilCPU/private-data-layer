@@ -67,6 +67,7 @@ def _parse_amount(name: str, value: str | None) -> Decimal | None:
 
 def _transaction_row(tx: Transaction, names: dict[str, str]) -> dict[str, Any]:
     return {
+        "id": tx.id,
         "posted_on": tx.posted_on.isoformat(),
         "amount": _money(tx.amount),
         "description": tx.description,

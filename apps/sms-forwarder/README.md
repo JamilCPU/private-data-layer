@@ -20,38 +20,32 @@ Cleartext traffic is disabled; the store must be reached over `https://`.
 The store operator produces a link of the form
 
 ```
-pdl-sms://pair?url=https%3A%2F%2Fsms.lab%3A8443&token=<device token>&fp=<64 hex chars>
+pdl-sms://pair?url=https%3A%2F%2Fsms.lab&token=<device token>&fp=<64 hex chars>&ca=<base64url>
 ```
 
-`fp` is the SHA-256 fingerprint of the store's CA certificate. Tap the link (or paste it into the
-"Pairing URI" field and press Pair). The token is stored encrypted with a non-exportable Android
-Keystore key; the status screen shows only the store host, never the token. "Unpair" clears all of it.
+- `fp` is the SHA-256 fingerprint of the lab CA certificate (DER).
+- `ca` is that CA certificate (DER) as base64url without padding. The app refuses the link unless
+  the SHA-256 of `ca` equals `fp`, so `fp` is the integrity check of `ca`.
 
-TLS trust is limited to that CA: the presented chain must contain a certificate with the pinned
-fingerprint, and the certificates before it must validate against it (PKIX). Hostname verification
-is the OkHttp default.
+Build the two values from the CA PEM:
 
-## How forwarding works
+```
+openssl x509 -in lab-ca.pem -outform DER | base64 -w0 | tr '+/' '-_' | tr -d '='      # ca
+openssl x509 -in lab-ca.pem -outform DER | sha256sum | cut -d' ' -f1                   # fp
+```
 
-- `SmsReceiver` (`SMS_RECEIVED`) does nothing but start an immediate upload run. Every text is
-  therefore read from the SMS content provider and carries its provider `_id` as `provider_id`;
-  the sweep is the single source of truth, so a text seen by both the receiver trigger and a
-  periodic sweep is one queue row (the queue ignores a repeated `provider_id`).
-- `UploadWorker` runs every 15 minutes (network required), on every received text, and on
-  "Sync now". A run sweeps the provider for texts after the watermark (up to 500 per sweep,
-  repeated while full), resolves contact names, writes them to a Room queue, then uploads
-  batches of up to 100, oldest first, until the queue is empty.
-- **Watermark rule.** The watermark is the (`date`, `_id`) of the last text the store accepted.
-  It is initialised to the pairing time, so existing history is NOT uploaded on first pairing;
-  only texts arriving after pairing are forwarded. It advances only after a batch is accepted
-  (a `duplicates` reply still counts as accepted) and survives re-pairing, so a gap while the token
-  was revoked is caught up. Unpairing clears it.
-- **Offline / store errors.** The batch stays pending, the status shows `failed: <reason>`, and
-  WorkManager retries with its backoff. The next sweep never loses or duplicates anything.
-- **After revocation (401).** The token is marked invalid, the status shows "not paired", the run
-  stops without retrying, and nothing more is uploaded until the app is paired again. Queued texts
-  are kept and sent after re-pairing.
-- Sent rows stay in the queue table as a dedupe record; the server also dedupes on `provider_id`.
+Percent-encode the values when assembling the link. The link is about 1.9 KB, so paste it (or tap it
+as a link); it is too long for a QR code.
+
+Opening a link or pressing Pair never saves anything by itself: a confirmation dialog names the target
+host and the first 16 hex characters of the CA fingerprint (and, if already paired, says it replaces
+the current pairing with the current host). Only an explicit tap on Pair saves; Cancel discards.
+The token is stored encrypted with a non-exportable Android Keystore key; the status screen shows only
+the store host, never the token. "Unpair" clears all of it.
+
+TLS trust is limited to that CA: the served chain (leaf only, leaf plus intermediates, or leaf plus the
+CA) must validate against it as the sole trust anchor (PKIX with signature checks, no revocation).
+Hostname verification is the OkHttp default.
 
 ## Build (on the primary node)
 

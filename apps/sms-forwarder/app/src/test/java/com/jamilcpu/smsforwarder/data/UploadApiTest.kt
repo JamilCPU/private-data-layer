@@ -20,7 +20,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UploadApiTest {
-    private val settings = StoreSettings("https://sms.lab:8443/", "tok-123", "ab".repeat(32))
+    private val settings = StoreSettings("https://sms.lab:8443/", "tok-123", "ab".repeat(32), byteArrayOf(1))
     private val msg = OutgoingMessage("9", 5L, "+15550100", null, "in", "hello", "3")
 
     private fun api(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData): UploadApi {

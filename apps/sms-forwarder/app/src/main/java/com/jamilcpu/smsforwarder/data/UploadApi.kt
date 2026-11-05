@@ -29,7 +29,7 @@ fun buildPinnedUploadClient(settings: StoreSettings): HttpClient =
     HttpClient(OkHttp) {
         install(HttpTimeout)
         expectSuccess = false
-        engine { preconfigured = pinnedCaOkHttp(settings.caFingerprint) }
+        engine { preconfigured = pinnedCaOkHttp(settings.caDer) }
     }
 
 class UploadApi(private val client: HttpClient, settings: StoreSettings) {

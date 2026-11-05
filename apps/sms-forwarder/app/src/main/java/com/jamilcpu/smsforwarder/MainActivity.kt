@@ -14,9 +14,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.jamilcpu.smsforwarder.data.PairingDecision
+import com.jamilcpu.smsforwarder.data.PendingPairing
 import com.jamilcpu.smsforwarder.data.SettingsStore
 import com.jamilcpu.smsforwarder.data.displayHost
 import com.jamilcpu.smsforwarder.data.parsePairUri
+import com.jamilcpu.smsforwarder.ui.PairConfirmDialog
 import com.jamilcpu.smsforwarder.ui.StatusScreen
 import com.jamilcpu.smsforwarder.ui.StatusState
 import com.jamilcpu.smsforwarder.sms.QueueDatabase
@@ -24,6 +27,7 @@ import com.jamilcpu.smsforwarder.sms.RoomQueue
 import com.jamilcpu.smsforwarder.sms.UploadWorker
 import com.jamilcpu.smsforwarder.ui.SyncTrigger
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 private val REQUIRED_PERMISSIONS = arrayOf(
@@ -35,6 +39,7 @@ private val REQUIRED_PERMISSIONS = arrayOf(
 class MainActivity : ComponentActivity() {
     private lateinit var settings: SettingsStore
     private var state by mutableStateOf(StatusState())
+    private var pending by mutableStateOf<PendingPairing?>(null)
     private val syncTrigger = SyncTrigger { UploadWorker.enqueueNow(this) }
 
     private val permissionLauncher =
@@ -56,6 +61,13 @@ class MainActivity : ComponentActivity() {
                         onUnpair = ::unpair,
                         onRequestPermissions = { permissionLauncher.launch(REQUIRED_PERMISSIONS) },
                     )
+                    pending?.let { p ->
+                        PairConfirmDialog(
+                            pending = p,
+                            onConfirm = { confirmPairing(p) },
+                            onCancel = { pending = null },
+                        )
+                    }
                 }
             }
         }
@@ -102,7 +114,14 @@ class MainActivity : ComponentActivity() {
             return
         }
         state = state.copy(pairError = null)
-        lifecycleScope.launch { settings.save(parsed) }
+        lifecycleScope.launch {
+            pending = PairingDecision.fromIntent(settings.flow.first(), parsed)
+        }
+    }
+
+    private fun confirmPairing(p: PendingPairing) {
+        pending = null
+        lifecycleScope.launch { settings.save(p.incoming) }
     }
 
     private fun refreshPermissions() {

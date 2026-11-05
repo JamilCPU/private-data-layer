@@ -254,7 +254,7 @@ keys `SMS_OWNER_PASSWORD` / `SMS_READER_PASSWORD`).
    REPO=~/private-data-layer   # your checkout of this repository
    umask 077 && cd "$(mktemp -d)" && pwd   # stay in this directory until the end of step 8
    uv run --project "$REPO/servers/sms-store" pdl-sms-new-device-token --name pixel --out pixel.token
-   # the hashed entry is printed on stderr; edit tokens.yaml so it reads:  devices:  then  pixel: <that line>
+   # the hashed entry is printed on stderr as "  pixel: <hash>"; paste that line as-is under "devices:" in tokens.yaml
    $EDITOR tokens.yaml
    kubectl -n lab create secret generic sms-device-tokens --from-file=tokens.yaml=tokens.yaml
    shred -u tokens.yaml

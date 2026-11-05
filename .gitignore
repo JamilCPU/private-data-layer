@@ -41,3 +41,8 @@ deploy/compose/imap.password
 deploy/compose/bank-rules.dev.yaml
 deploy/compose/bank-csv-mappings.dev.yaml
 sms-tokens.dev.yaml
+
+# device tokens and token tables (the hashed table is still a secret list)
+*.token
+tokens.yaml
+pixel.token

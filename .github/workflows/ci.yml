@@ -118,6 +118,34 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
+  sms-store:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: servers/sms-store
+    env:
+      # The CI database is an ephemeral service container; its password is the run id, not a secret.
+      TEST_PG_DSN: postgresql://postgres:${{ github.run_id }}@localhost:5432/postgres
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ${{ github.run_id }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
   search-mcp:
     runs-on: ubuntu-latest
     defaults:

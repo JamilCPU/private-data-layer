@@ -51,6 +51,9 @@ uv run pdl-assistant --config assistant.example.yaml
 | `briefing_retry_until` | `10:00` | Local `HH:MM` after which an offline model skips the day |
 | `briefing_retry_interval_s` | `900` | Seconds between probes while the model is offline |
 | `briefing_news_count` | `3` | News items in the briefing |
+| `flagger_config_file` | unset | Path to the flagger checks YAML (see `flagger.example.yaml`); unset disables the flagger |
+| `flagger_lookback_days` | `45` | Days of history the flagger scans (1-365) |
+| `flagger_require_brain` | `false` | Skip a flagger run instead of degrading when the model is offline (`1/true/yes` or `0/false/no`) |
 
 The secrets file holds `api_tokens` (name to PBKDF2 hash) and `cookie_secret`.
 

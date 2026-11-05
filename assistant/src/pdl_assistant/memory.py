@@ -3,6 +3,7 @@
 import secrets
 import sqlite3
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +41,15 @@ CREATE TABLE IF NOT EXISTS briefings (
     text TEXT NOT NULL,
     note TEXT
 );
+CREATE TABLE IF NOT EXISTS flags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_name TEXT NOT NULL,
+    key TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    notified_at TEXT,
+    UNIQUE(check_name, key)
+);
 """
 
 
@@ -70,6 +80,16 @@ class Briefing:
     note: str | None
 
 
+@dataclass(frozen=True)
+class StoredFlag:
+    id: int
+    check_name: str
+    key: str
+    summary: str
+    created_at: str
+    notified_at: str | None
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -97,6 +117,13 @@ class MemoryStore:
             cursor = self._conn.execute(sql, params)
             self._conn.commit()
             return cursor.lastrowid or 0
+
+    def _write_count(self, sql: str, params: tuple = ()) -> int:
+        """Run a write and return the number of rows it changed."""
+        with self._lock:
+            cursor = self._conn.execute(sql, params)
+            self._conn.commit()
+            return cursor.rowcount
 
     def _read(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -198,3 +225,33 @@ class MemoryStore:
             return None
         started = datetime.fromisoformat(rows[0]["started_at"])
         return started if started.tzinfo else started.replace(tzinfo=UTC)
+
+    def add_flag(self, check_name: str, key: str, summary: str, created_at: str) -> bool:
+        """Store a flag; True only when it is new for ``(check_name, key)``."""
+        changed = self._write_count(
+            "INSERT OR IGNORE INTO flags (check_name, key, summary, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (check_name, key, summary, created_at),
+        )
+        return changed == 1
+
+    def unnotified_flags(self) -> list[StoredFlag]:
+        """Flags not yet pushed to the owner, oldest first."""
+        rows = self._read("SELECT * FROM flags WHERE notified_at IS NULL ORDER BY id")
+        return [StoredFlag(**dict(row)) for row in rows]
+
+    def mark_flags_notified(self, ids: Sequence[int], at: str) -> None:
+        if not ids:
+            return
+        marks = ", ".join("?" * len(ids))
+        self._write(f"UPDATE flags SET notified_at = ? WHERE id IN ({marks})", (at, *ids))
+
+    def flags_since(self, since: datetime) -> list[StoredFlag]:
+        """Flags created at or after ``since`` (naive means UTC), oldest first."""
+        aware = since if since.tzinfo else since.replace(tzinfo=UTC)
+        rows = self._read("SELECT * FROM flags ORDER BY id")
+        return [
+            StoredFlag(**dict(row))
+            for row in rows
+            if datetime.fromisoformat(row["created_at"]).astimezone(UTC) >= aware
+        ]

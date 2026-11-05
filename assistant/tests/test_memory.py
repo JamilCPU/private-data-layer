@@ -1,7 +1,8 @@
 """Tests for the SQLite memory store."""
 
 import sqlite3
-from datetime import datetime
+from dataclasses import FrozenInstanceError
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -130,3 +131,66 @@ def test_last_sent_briefing_at_coerces_naive_to_utc(store: MemoryStore):
     got = store.last_sent_briefing_at()
     assert got is not None and got.tzinfo is UTC
     assert got.hour == 7
+
+
+def _ts(day: int) -> str:
+    return datetime(2026, 11, day, 12, tzinfo=UTC).isoformat()
+
+
+def test_add_flag_dedupes_on_check_and_key(store: MemoryStore):
+    assert store.add_flag("big", "tx1", "Large charge", _ts(1)) is True
+    assert store.add_flag("big", "tx1", "Large charge again", _ts(2)) is False
+    assert store.add_flag("big", "tx2", "Another", _ts(2)) is True
+    assert store.add_flag("other", "tx1", "Same key, other check", _ts(2)) is True
+
+
+def test_unnotified_flags_oldest_first_and_mark_notified(store: MemoryStore):
+    store.add_flag("c", "a", "first", _ts(1))
+    store.add_flag("c", "b", "second", _ts(2))
+    store.add_flag("c", "c", "third", _ts(3))
+    pending = store.unnotified_flags()
+    assert [f.key for f in pending] == ["a", "b", "c"]
+    assert all(f.notified_at is None for f in pending)
+    store.mark_flags_notified([pending[0].id, pending[2].id], _ts(4))
+    assert [f.key for f in store.unnotified_flags()] == ["b"]
+    done = store.flags_since(datetime(2026, 11, 1, tzinfo=UTC))
+    assert {f.key: f.notified_at for f in done}["a"] == _ts(4)
+
+
+def test_mark_flags_notified_empty_is_noop(store: MemoryStore):
+    store.add_flag("c", "a", "first", _ts(1))
+    store.mark_flags_notified([], _ts(2))
+    assert len(store.unnotified_flags()) == 1
+
+
+def test_flags_since_boundary_and_order(store: MemoryStore):
+    store.add_flag("c", "old", "old", _ts(1))
+    store.add_flag("c", "edge", "edge", _ts(2))
+    store.add_flag("c", "new", "new", _ts(3))
+    got = store.flags_since(datetime(2026, 11, 2, 12, tzinfo=UTC))
+    assert [f.key for f in got] == ["edge", "new"]
+
+
+def test_flags_since_naive_is_utc(store: MemoryStore):
+    store.add_flag("c", "edge", "edge", _ts(2))
+    assert len(store.flags_since(datetime(2026, 11, 2, 12))) == 1
+
+
+def test_stored_flag_is_frozen(store: MemoryStore):
+    store.add_flag("c", "a", "s", _ts(1))
+    flag = store.unnotified_flags()[0]
+    with pytest.raises(FrozenInstanceError):
+        flag.summary = "x"  # type: ignore[misc]
+
+
+def test_existing_database_gains_flags_table(tmp_path: Path):
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE preferences (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)")
+    conn.commit()
+    conn.close()
+    s = MemoryStore(path)
+    try:
+        assert s.add_flag("c", "k", "s", _ts(1)) is True
+    finally:
+        s.close()

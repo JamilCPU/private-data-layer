@@ -1,0 +1,9 @@
+# Flagger checks. The thresholds and senders below are the owner's to edit; these are examples.
+# Point flagger_config_file (or ASSISTANT_FLAGGER_CONFIG_FILE) at your copy of this file.
+checks:
+  # Flag any single transaction above this amount (direction: spend, or any for both ways).
+  - {name: large-transaction, type: transaction_over, amount: "500"}
+  # Flag a recurring charge that changed by more than this many percent.
+  - {name: recurring-change, type: recurring_change, percent: "20"}
+  # Flag email from any of these senders.
+  - {name: watched-sender, type: email_from, senders: ["billing@example.com"]}

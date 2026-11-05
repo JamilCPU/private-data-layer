@@ -205,3 +205,55 @@ def test_briefing_defaults(tmp_path: Path) -> None:
     assert (cfg.briefing_timezone, cfg.briefing_retry_until) == ("America/Chicago", "10:00")
     assert (cfg.briefing_retry_interval_s, cfg.briefing_news_count) == (900, 3)
     assert cfg.ntfy_topic == "briefing"
+
+
+def test_flagger_defaults(tmp_path: Path) -> None:
+    cfg = load_config(_write(tmp_path, _yaml()), {})
+    assert cfg.flagger_config_file is None
+    assert cfg.flagger_lookback_days == 45
+    assert cfg.flagger_require_brain is False
+
+
+def test_flagger_env_overrides(tmp_path: Path) -> None:
+    env = {
+        "ASSISTANT_FLAGGER_CONFIG_FILE": "/etc/flagger.yaml",
+        "ASSISTANT_FLAGGER_LOOKBACK_DAYS": "90",
+        "ASSISTANT_FLAGGER_REQUIRE_BRAIN": "Yes",
+    }
+    cfg = load_config(_write(tmp_path, _yaml()), env)
+    assert cfg.flagger_config_file == "/etc/flagger.yaml"
+    assert cfg.flagger_lookback_days == 90
+    assert cfg.flagger_require_brain is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("1", True), ("TRUE", True), ("yes", True), ("0", False), ("False", False), ("NO", False)],
+)
+def test_flagger_require_brain_env_values(tmp_path: Path, raw: str, expected: bool) -> None:
+    env = {"ASSISTANT_FLAGGER_REQUIRE_BRAIN": raw}
+    assert load_config(_write(tmp_path, _yaml()), env).flagger_require_brain is expected
+
+
+def test_flagger_require_brain_yaml_bool(tmp_path: Path) -> None:
+    cfg = load_config(_write(tmp_path, _yaml(flagger_require_brain=True)), {})
+    assert cfg.flagger_require_brain is True
+
+
+@pytest.mark.parametrize("raw", ["maybe", "", "2"])
+def test_flagger_require_brain_rejects_other(tmp_path: Path, raw: str) -> None:
+    env = {"ASSISTANT_FLAGGER_REQUIRE_BRAIN": raw}
+    with pytest.raises(ConfigError, match="flagger_require_brain"):
+        load_config(_write(tmp_path, _yaml()), env)
+
+
+@pytest.mark.parametrize("days", [0, -1, 366])
+def test_flagger_lookback_bounds(tmp_path: Path, days: int) -> None:
+    with pytest.raises(ConfigError, match="flagger_lookback_days"):
+        load_config(_write(tmp_path, _yaml(flagger_lookback_days=days)), {})
+
+
+@pytest.mark.parametrize("days", [1, 365])
+def test_flagger_lookback_bounds_accepted(tmp_path: Path, days: int) -> None:
+    cfg = load_config(_write(tmp_path, _yaml(flagger_lookback_days=days)), {})
+    assert cfg.flagger_lookback_days == days
